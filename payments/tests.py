@@ -1,5 +1,6 @@
 from django.db import IntegrityError, transaction
 from django.test import TestCase
+from rest_framework.test import APIClient
 
 from .models import Payment
 
@@ -36,3 +37,42 @@ class PaymentModelTests(TestCase):
                     sender="charlie",
                     receiver="dave",
                 )
+
+
+class PaymentAPITests(TestCase):
+     
+    def setUp(self):
+        self.client = APIClient()
+ 
+    def test_create_payment_via_api_succeeds(self):
+        response = self.client.post("/api/payments/", {
+            "idempotency_key": "api-key-001",
+            "amount": "250.00",
+            "sender": "alice",
+            "receiver": "bob",
+        })
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["status"], "pending")
+ 
+    def test_create_payment_missing_amount_is_rejected(self):
+        response = self.client.post("/api/payments/", {
+            "idempotency_key": "api-key-002",
+            "sender": "alice",
+            "receiver": "bob",
+        })
+        self.assertEqual(response.status_code, 400)
+ 
+    def test_sending_the_same_key_twice_currently_creates_two_payments(self):
+        payload = {
+            "idempotency_key": "same-key-sent-twice",
+            "amount": "500.00",
+            "sender": "alice",
+            "receiver": "bob",
+        }
+ 
+        first_response = self.client.post("/api/payments/", payload)
+        self.assertEqual(first_response.status_code, 201)
+ 
+        second_response = self.client.post("/api/payments/", payload)
+        self.assertNotEqual(second_response.status_code, 201)
+ 
