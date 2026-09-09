@@ -3,6 +3,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from .models import Payment
+from .models import Payment, InvalidStateTransition
 
 
 class PaymentModelTests(TestCase):
@@ -94,3 +95,66 @@ class PaymentAPITests(TestCase):
         response = self.client.post("/api/payments/", second_payload)
 
         self.assertEqual(response.data["amount"], "100.00")  # original amount, not the new one
+
+
+class PaymentStateMachineTests(TestCase):
+
+    def setUp(self):
+        self.payment = Payment.objects.create(
+            idempotency_key="state-test-key",
+            amount=500.00,
+            sender="alice",
+            receiver="bob",
+        )
+
+    def test_new_payment_starts_pending(self):
+        self.assertEqual(self.payment.status, "pending")
+
+    def test_pending_to_processing_is_allowed(self):
+        self.payment.transition_to("processing")
+        self.assertEqual(self.payment.status, "processing")
+
+    def test_processing_to_succeeded_is_allowed(self):
+        self.payment.transition_to("processing")
+        self.payment.transition_to("succeeded")
+        self.assertEqual(self.payment.status, "succeeded")
+
+    def test_processing_to_failed_is_allowed(self):
+        self.payment.transition_to("processing")
+        self.payment.transition_to("failed")
+        self.assertEqual(self.payment.status, "failed")
+
+    def test_pending_directly_to_succeeded_is_blocked(self):
+        """A payment can't skip straight to succeeded -- it must pass
+        through processing first."""
+        with self.assertRaises(InvalidStateTransition):
+            self.payment.transition_to("succeeded")
+
+    def test_succeeded_back_to_pending_is_blocked(self):
+        """The real-world case this whole state machine exists to
+        prevent: un-completing a payment that already delivered money."""
+        self.payment.transition_to("processing")
+        self.payment.transition_to("succeeded")
+
+        with self.assertRaises(InvalidStateTransition):
+            self.payment.transition_to("pending")
+
+    def test_failed_to_processing_is_blocked(self):
+        """A failed payment is terminal -- retrying requires a NEW
+        payment/idempotency key, not resurrecting the old one."""
+        self.payment.transition_to("processing")
+        self.payment.transition_to("failed")
+
+        with self.assertRaises(InvalidStateTransition):
+            self.payment.transition_to("processing")
+
+    def test_invalid_transition_does_not_change_the_status(self):
+        """Confirm a failed transition attempt leaves the payment
+        exactly as it was -- no partial or corrupted state."""
+        try:
+            self.payment.transition_to("succeeded")  # invalid from pending
+        except InvalidStateTransition:
+            pass
+
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, "pending")
