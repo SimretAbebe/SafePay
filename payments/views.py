@@ -1,3 +1,4 @@
+from .tasks import log_payment_event
 from django.db import IntegrityError, transaction
 from rest_framework import status
 from rest_framework.decorators import api_view
@@ -15,6 +16,7 @@ def create_payment(request):
         idempotency_key=idempotency_key
     ).first()
     if existing_payment is not None:
+        log_payment_event.delay(existing_payment.id, "payment created")
         return Response(
             PaymentSerializer(existing_payment).data,
             status=status.HTTP_200_OK,
