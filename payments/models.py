@@ -2,11 +2,14 @@ from django.db import models
 
 
 class InvalidStateTransition(Exception):
+    """
+    Raised when code tries to move a Payment into a status it's not
+    allowed to move into from its current status.
+    """
     pass
 
 
 class Payment(models.Model):
-
     STATUS_CHOICES = [
         ("pending", "Pending"),
         ("processing", "Processing"),
@@ -17,8 +20,8 @@ class Payment(models.Model):
     VALID_TRANSITIONS = {
         "pending": ["processing"],
         "processing": ["succeeded", "failed"],
-        "succeeded": [],  # terminal state 
-        "failed": [],      # terminal state
+        "succeeded": [],
+        "failed": [],
     }
 
     idempotency_key = models.CharField(
@@ -57,3 +60,39 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.idempotency_key} - {self.status} - {self.amount}"
+
+
+class WebhookDelivery(models.Model):
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),     
+        ("succeeded", "Succeeded"), 
+        ("failed", "Failed"),       
+    ]
+
+    payment = models.ForeignKey(
+        Payment,
+        on_delete=models.CASCADE,
+        related_name="webhook_deliveries",
+    )
+
+    target_url = models.URLField()
+    payload = models.JSONField()
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="pending",
+    )
+
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+
+    last_response_code = models.IntegerField(null=True, blank=True)
+    last_error = models.TextField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Webhook for payment {self.payment_id} -> {self.status} ({self.attempt_count}/{self.max_attempts})"
