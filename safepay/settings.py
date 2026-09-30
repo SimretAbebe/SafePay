@@ -80,6 +80,10 @@ WSGI_APPLICATION = 'safepay.wsgi.application'
 
 
 
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "dev-secret-change-me")
+WEBHOOK_TARGET_URL = os.getenv("WEBHOOK_TARGET_URL", "https://webhook.site/your-unique-id")
+
+
 
 
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
