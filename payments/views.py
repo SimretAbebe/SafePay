@@ -1,14 +1,18 @@
 from .tasks import log_payment_event
 from django.db import IntegrityError, transaction
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
 
 from .models import Payment
 from .serializers import PaymentSerializer
+from .permissions import HasAPIKey
+from .throttling import PaymentRateThrottle
 
 
 @api_view(["POST"])
+@permission_classes([HasAPIKey])
+@throttle_classes([PaymentRateThrottle])
 def create_payment(request):
     idempotency_key = request.data.get("idempotency_key")
 
