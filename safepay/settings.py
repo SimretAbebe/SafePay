@@ -45,6 +45,13 @@ INSTALLED_APPS = [
     'payments',
 ]
 
+REST_FRAMEWORK = {
+    'DEFAULT_THROTTLE_RATES': {
+        'payments': '5/minute',
+        'anon': '10/minute',
+    }
+}
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -82,6 +89,7 @@ WSGI_APPLICATION = 'safepay.wsgi.application'
 
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "dev-secret-change-me")
 WEBHOOK_TARGET_URL = os.getenv("WEBHOOK_TARGET_URL", "https://webhook.site/your-unique-id")
+SAFE_PAY_API_KEY = os.getenv("SAFE_PAY_API_KEY", "dev-api-key-change-me")
 
 
 
@@ -89,8 +97,31 @@ WEBHOOK_TARGET_URL = os.getenv("WEBHOOK_TARGET_URL", "https://webhook.site/your-
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+if CELERY_BROKER_URL.startswith("rediss://"):
+    CELERY_REDIS_BACKEND_USE_SSL = {"ssl_cert_reqs": "none"}
+    CELERY_BROKER_USE_SSL = {"ssl_cert_reqs": "none"}
+
 if "test" in sys.argv:
     CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = True
+    CELERY_RESULT_BACKEND = "cache+memory://"
+    PAYMENT_THROTTLE_RATE = "10000/minute"
+else:
+    PAYMENT_THROTTLE_RATE = os.getenv("PAYMENT_THROTTLE_RATE", "100/minute")
+
+# --- Cache backend (used by rate-limiter) ---
+# Local-memory cache is per-process, so each gunicorn/runserver worker
+# keeps its own counter — that's the bug.  Redis is shared across all
+# processes, so the counter is accurate.
+
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/1",
+    }
+}
+
 
 DATABASES = {
     'default': {

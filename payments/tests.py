@@ -2,6 +2,7 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from rest_framework.test import APIClient
 
+from django.conf import settings
 from .models import Payment
 from .models import Payment, InvalidStateTransition
 
@@ -38,6 +39,7 @@ class PaymentAPITests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
+        self.client.credentials(HTTP_X_API_KEY=settings.SAFE_PAY_API_KEY)
 
     def test_create_payment_via_api_succeeds(self):
         response = self.client.post("/api/payments/", {

@@ -1,5 +1,6 @@
 import threading
 
+from django.conf import settings
 from django.db import connection
 from django.test import TransactionTestCase
 from rest_framework.test import APIClient
@@ -19,6 +20,7 @@ class PaymentConcurrencyTests(TransactionTestCase):
         def worker():
             try:
                 client = APIClient()  # each thread gets its own client
+                client.credentials(HTTP_X_API_KEY=settings.SAFE_PAY_API_KEY)
                 barrier.wait()        # everyone starts together
                 response = client.post("/api/payments/", payload, format="json")
                 status_codes.append(response.status_code)
