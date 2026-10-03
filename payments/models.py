@@ -55,8 +55,19 @@ class Payment(models.Model):
                 f"states from '{self.status}': {allowed_next_statuses or 'none (terminal state)'}"
             )
 
+        old_status = self.status
         self.status = new_status
         self.save(update_fields=["status", "updated_at"])
+
+        PaymentStatusHistory.objects.create(
+            payment=self,
+            from_status=old_status,
+            to_status=new_status,
+        )
+
+    @property
+    def history(self):
+        return self.status_history.all()
 
     def __str__(self):
         return f"{self.idempotency_key} - {self.status} - {self.amount}"
@@ -96,3 +107,27 @@ class WebhookDelivery(models.Model):
 
     def __str__(self):
         return f"Webhook for payment {self.payment_id} -> {self.status} ({self.attempt_count}/{self.max_attempts})"
+
+
+class PaymentStatusHistory(models.Model):
+    payment = models.ForeignKey(
+        Payment,
+        on_delete=models.CASCADE,
+        related_name="status_history",
+    )
+    from_status = models.CharField(
+        max_length=20,
+        choices=Payment.STATUS_CHOICES,
+    )
+    to_status = models.CharField(
+        max_length=20,
+        choices=Payment.STATUS_CHOICES,
+    )
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["changed_at"]
+        verbose_name_plural = "Payment status histories"
+
+    def __str__(self):
+        return f"{self.payment.idempotency_key}: {self.from_status} -> {self.to_status}"
