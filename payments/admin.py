@@ -2,11 +2,32 @@ from django.contrib import admin, messages
 
 from .models import (
     InvalidStateTransition,
+    Merchant,
     Payment,
     PaymentStatusHistory,
     WebhookDelivery,
 )
 from .tasks import deliver_webhook_attempt
+
+
+@admin.register(Merchant)
+class MerchantAdmin(admin.ModelAdmin):
+    list_display = ("name", "key_prefix", "is_active", "created_at")
+    readonly_fields = ("api_key_hash", "key_prefix", "created_at")
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            raw_key, api_key_hash, key_prefix = Merchant.generate_key_pair()
+            obj.api_key_hash = api_key_hash
+            obj.key_prefix = key_prefix
+            super().save_model(request, obj, form, change)
+            self.message_user(
+                request,
+                f"Merchant '{obj.name}' created. API Key: {raw_key} (Save this key now; it will never be displayed again.)",
+                level=messages.SUCCESS,
+            )
+        else:
+            super().save_model(request, obj, form, change)
 
 
 class PaymentStatusHistoryInline(admin.TabularInline):
@@ -23,13 +44,14 @@ class PaymentStatusHistoryInline(admin.TabularInline):
 class PaymentAdmin(admin.ModelAdmin):
     list_display = (
         "idempotency_key",
+        "merchant",
         "amount",
         "sender",
         "receiver",
         "status",
         "created_at",
     )
-    list_filter = ("status",)
+    list_filter = ("status", "merchant")
     search_fields = ("idempotency_key", "sender", "receiver")
     # status is read-only: editing it here would skip transition_to(),
     # bypass the state rules, and create no history row

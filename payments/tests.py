@@ -2,24 +2,29 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from django.conf import settings
-from .models import Payment
 from .models import Payment, InvalidStateTransition
+from .test_utils import create_test_merchant
 
 
 class PaymentModelTests(TestCase):
 
+    def setUp(self):
+        self.merchant, _ = create_test_merchant("Model Test Merchant")
+
     def test_creating_a_payment_works(self):
         payment = Payment.objects.create(
+            merchant=self.merchant,
             idempotency_key="test-key-001",
             amount=500.00,
             sender="alice",
             receiver="bob",
         )
         self.assertEqual(payment.status, "pending")
+        self.assertEqual(payment.merchant, self.merchant)
 
     def test_duplicate_idempotency_key_is_rejected_by_the_database(self):
         Payment.objects.create(
+            merchant=self.merchant,
             idempotency_key="duplicate-key",
             amount=100.00,
             sender="alice",
@@ -28,6 +33,7 @@ class PaymentModelTests(TestCase):
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
                 Payment.objects.create(
+                    merchant=self.merchant,
                     idempotency_key="duplicate-key",
                     amount=999.00,
                     sender="charlie",
@@ -39,7 +45,8 @@ class PaymentAPITests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.client.credentials(HTTP_X_API_KEY=settings.SAFE_PAY_API_KEY)
+        self.merchant, self.api_key = create_test_merchant("API Test Merchant")
+        self.client.credentials(HTTP_X_API_KEY=self.api_key)
 
     def test_create_payment_via_api_succeeds(self):
         response = self.client.post("/api/payments/", {

@@ -1,16 +1,18 @@
-from django.conf import settings
 from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from .test_utils import create_test_merchant
+
 
 class PaymentThrottlingTests(TestCase):
     def setUp(self):
         cache.clear()
         self.client = APIClient()
-        self.client.credentials(HTTP_X_API_KEY=settings.SAFE_PAY_API_KEY)
+        self.merchant, self.api_key = create_test_merchant("Throttle Test Merchant")
+        self.client.credentials(HTTP_X_API_KEY=self.api_key)
         self.url = reverse("create-payment")
 
     def tearDown(self):
