@@ -1,4 +1,40 @@
+import hashlib
+import secrets
 from django.db import models
+
+
+class Merchant(models.Model):
+    name = models.CharField(max_length=255)
+    api_key_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    key_prefix = models.CharField(max_length=8)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    @staticmethod
+    def hash_key(raw_key: str) -> str:
+        return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def generate_key_pair(cls):
+        raw_key = secrets.token_urlsafe(32)
+        api_key_hash = cls.hash_key(raw_key)
+        key_prefix = raw_key[:8]
+        return raw_key, api_key_hash, key_prefix
+
+    @classmethod
+    def create_with_key(cls, name: str, is_active: bool = True, **kwargs):
+        raw_key, api_key_hash, key_prefix = cls.generate_key_pair()
+        merchant = cls.objects.create(
+            name=name,
+            api_key_hash=api_key_hash,
+            key_prefix=key_prefix,
+            is_active=is_active,
+            **kwargs,
+        )
+        return merchant, raw_key
+
+    def __str__(self):
+        return self.name
 
 
 class InvalidStateTransition(Exception):
@@ -24,9 +60,16 @@ class Payment(models.Model):
         "failed": [],
     }
 
+    merchant = models.ForeignKey(
+        Merchant,
+        on_delete=models.PROTECT,
+        related_name="payments",
+        null=True,
+        blank=True,
+    )
+
     idempotency_key = models.CharField(
         max_length=255,
-        unique=True,
         db_index=True,
         help_text="Client-provided unique key. Same key sent twice must "
                    "never result in two payments.",
@@ -68,6 +111,14 @@ class Payment(models.Model):
     @property
     def history(self):
         return self.status_history.all()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["merchant", "idempotency_key"],
+                name="unique_idempotency_key_per_merchant",
+            )
+        ]
 
     def __str__(self):
         return f"{self.idempotency_key} - {self.status} - {self.amount}"
