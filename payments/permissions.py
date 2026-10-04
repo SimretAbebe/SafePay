@@ -1,12 +1,11 @@
-import secrets
-from django.conf import settings
 from rest_framework.permissions import BasePermission
+from .models import Merchant
 
 
 class HasAPIKey(BasePermission):
     """
-    Allows access only to requests containing a valid X-API-Key header.
-    Uses constant-time comparison to prevent timing attacks.
+    Allows access only to requests containing a valid X-API-Key header
+    belonging to an active merchant.
     """
     message = "Invalid or missing API key."
 
@@ -15,8 +14,10 @@ class HasAPIKey(BasePermission):
         if not api_key:
             return False
 
-        expected_key = getattr(settings, "SAFE_PAY_API_KEY", None)
-        if not expected_key:
+        key_hash = Merchant.hash_key(api_key)
+        merchant = Merchant.objects.filter(api_key_hash=key_hash, is_active=True).first()
+        if not merchant:
             return False
 
-        return secrets.compare_digest(api_key, expected_key)
+        request.merchant = merchant
+        return True
