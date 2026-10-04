@@ -1,12 +1,15 @@
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 from rest_framework import status
+
+from .test_utils import create_test_merchant
 
 
 class APIKeyAuthenticationTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.merchant, self.api_key = create_test_merchant("Auth Test Merchant")
         self.url = reverse("create-payment")
         self.payload = {
             "amount": "100.00",
@@ -28,13 +31,12 @@ class APIKeyAuthenticationTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    @override_settings(SAFE_PAY_API_KEY="test-secret-key-12345")
     def test_request_with_valid_api_key_succeeds(self):
         response = self.client.post(
             self.url,
             self.payload,
             format="json",
-            HTTP_X_API_KEY="test-secret-key-12345"
+            HTTP_X_API_KEY=self.api_key
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["idempotency_key"], "auth-test-key-1")

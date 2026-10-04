@@ -1,14 +1,17 @@
 import threading
 
-from django.conf import settings
 from django.db import connection
 from django.test import TransactionTestCase
 from rest_framework.test import APIClient
 
 from .models import Payment
+from .test_utils import create_test_merchant
 
 
 class PaymentConcurrencyTests(TransactionTestCase):
+
+    def setUp(self):
+        self.merchant, self.api_key = create_test_merchant("Concurrency Merchant")
 
     def _fire_identical_requests(self, payload, num_threads):
         """
@@ -20,7 +23,7 @@ class PaymentConcurrencyTests(TransactionTestCase):
         def worker():
             try:
                 client = APIClient()  # each thread gets its own client
-                client.credentials(HTTP_X_API_KEY=settings.SAFE_PAY_API_KEY)
+                client.credentials(HTTP_X_API_KEY=self.api_key)
                 barrier.wait()        # everyone starts together
                 response = client.post("/api/payments/", payload, format="json")
                 status_codes.append(response.status_code)
