@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from .models import Payment
 from .permissions import HasAPIKey
 from .serializers import PaymentSerializer
+from .services import notify_status_change
 from .tasks import log_payment_event
 from .throttling import PaymentRateThrottle
 
@@ -56,5 +57,59 @@ def payment_detail(request, pk):
     payment = get_object_or_404(Payment, pk=pk, merchant=request.merchant)
     return Response(
         PaymentSerializer(payment).data,
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([HasAPIKey])
+def verify_payment(request, pk):
+    payment = get_object_or_404(Payment, pk=pk, merchant=request.merchant)
+    return Response(
+        {
+            "id": payment.id,
+            "status": payment.status,
+            "updated_at": payment.updated_at,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+# Statuses that cannot be cancelled because they are already terminal
+_NON_CANCELLABLE_STATUSES = {"processing", "succeeded", "failed"}
+
+
+@api_view(["POST"])
+@permission_classes([HasAPIKey])
+def cancel_payment(request, pk):
+    with transaction.atomic():
+        payment = get_object_or_404(
+            Payment.objects.select_for_update(),
+            pk=pk,
+            merchant=request.merchant,
+        )
+
+        if payment.status == "cancelled":
+            # Already cancelled — idempotent, no history row, no webhook.
+            return Response(
+                {"id": payment.id, "status": "cancelled"},
+                status=status.HTTP_200_OK,
+            )
+
+        if payment.status in _NON_CANCELLABLE_STATUSES:
+            return Response(
+                {"detail": "Payment can no longer be cancelled."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # status is "pending" — the only state that allows cancellation.
+        payment.transition_to("cancelled")
+
+    # Notify outside the atomic block so the DB row is visible before the
+    # Celery task runs, but we call it regardless because cancelled is terminal.
+    notify_status_change(payment)
+
+    return Response(
+        {"id": payment.id, "status": "cancelled"},
         status=status.HTTP_200_OK,
     )
