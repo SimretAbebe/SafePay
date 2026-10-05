@@ -51,13 +51,15 @@ class Payment(models.Model):
         ("processing", "Processing"),
         ("succeeded", "Succeeded"),
         ("failed", "Failed"),
+        ("cancelled", "Cancelled"),
     ]
 
     VALID_TRANSITIONS = {
-        "pending": ["processing"],
+        "pending": ["processing", "cancelled"],
         "processing": ["succeeded", "failed"],
         "succeeded": [],
         "failed": [],
+        "cancelled": [],
     }
 
     merchant = models.ForeignKey(
