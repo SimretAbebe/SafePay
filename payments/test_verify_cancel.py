@@ -186,7 +186,8 @@ class CancelEndpointTests(TestCase):
         self.assertEqual(deliveries.count(), 1)
 
         delivery = deliveries.first()
-        self.assertEqual(delivery.payload["status"], "cancelled")
+        self.assertEqual(delivery.payload["data"]["status"], "cancelled")
+        self.assertEqual(delivery.payload["type"], "payment.cancelled")
 
         # Celery task was enqueued exactly once
         self.assertEqual(mock_delay.call_count, 1)
