@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+import uuid
 from django.db import models
 
 
@@ -139,6 +140,13 @@ class WebhookDelivery(models.Model):
         on_delete=models.CASCADE,
         related_name="webhook_deliveries",
     )
+
+    event_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False,
+    )
+    event_type = models.CharField(max_length=50)
 
     target_url = models.URLField()
     payload = models.JSONField()
