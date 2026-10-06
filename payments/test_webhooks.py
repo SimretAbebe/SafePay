@@ -59,14 +59,13 @@ class WebhookDeliveryTests(TestCase):
     @patch("payments.tasks.requests.post")
     def test_webhook_payload_is_signed(self, mock_post):
         """
-        Confirm a real HMAC signature header is sent -- not just that
-        SOME header exists, but that it's actually verifiable using the
-        same secret and payload.
+        Confirm HMAC signature headers are sent and verifiable using the
+        secret, timestamp, and raw sent body.
         """
         import hashlib
         import hmac
-        import json
         from django.conf import settings
+        from .webhook_verification import verify_webhook
 
         mock_post.return_value = MagicMock(status_code=200)
 
@@ -76,13 +75,26 @@ class WebhookDeliveryTests(TestCase):
         sent_headers = mock_post.call_args.kwargs["headers"]
         sent_body = mock_post.call_args.kwargs["data"]
 
+        self.assertEqual(sent_headers["X-SafePay-Event-Id"], str(webhook.event_id))
+        self.assertIn("X-SafePay-Timestamp", sent_headers)
+
+        timestamp = sent_headers["X-SafePay-Timestamp"]
+        expected_to_sign = f"{timestamp}.".encode("utf-8") + sent_body
         expected_signature = hmac.new(
-            settings.WEBHOOK_SECRET.encode(),
-            sent_body,
+            settings.WEBHOOK_SECRET.encode("utf-8"),
+            expected_to_sign,
             hashlib.sha256,
         ).hexdigest()
 
         self.assertEqual(
             sent_headers["X-SafePay-Signature"],
-            f"sha256={expected_signature}",
+            expected_signature,
+        )
+        self.assertTrue(
+            verify_webhook(
+                secret=settings.WEBHOOK_SECRET,
+                timestamp=timestamp,
+                signature=sent_headers["X-SafePay-Signature"],
+                body=sent_body,
+            )
         )

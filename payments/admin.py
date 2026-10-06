@@ -92,6 +92,8 @@ def retry_webhook_deliveries(modeladmin, request, queryset):
 class WebhookDeliveryAdmin(admin.ModelAdmin):
     list_display = (
         "id",
+        "event_id",
+        "event_type",
         "payment",
         "target_url",
         "status",
@@ -101,7 +103,7 @@ class WebhookDeliveryAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
     )
-    list_filter = ("status", "last_response_code", "created_at")
-    search_fields = ("payment__idempotency_key", "target_url")
-    readonly_fields = ("created_at", "updated_at")
+    list_filter = ("status", "event_type", "last_response_code", "created_at")
+    search_fields = ("event_id", "event_type", "payment__idempotency_key", "target_url")
+    readonly_fields = ("event_id", "event_type", "created_at", "updated_at")
     actions = [retry_webhook_deliveries]

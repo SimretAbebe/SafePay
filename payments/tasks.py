@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 
 import requests
 from celery import shared_task
@@ -18,9 +19,10 @@ def log_payment_event(payment_id, event_description):
     return f"Logged: {event_description}"
 
 
-def _sign_payload(payload_bytes):
-    secret = settings.WEBHOOK_SECRET.encode()
-    return hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest()
+def _sign_payload(timestamp: str, payload_bytes: bytes) -> str:
+    secret = settings.WEBHOOK_SECRET.encode("utf-8")
+    to_sign = f"{timestamp}.".encode("utf-8") + payload_bytes
+    return hmac.new(secret, to_sign, hashlib.sha256).hexdigest()
 
 
 @shared_task
@@ -34,8 +36,9 @@ def deliver_webhook_attempt(webhook_delivery_id):
     if webhook.status != "pending":
         return
 
-    payload_bytes = json.dumps(webhook.payload).encode()
-    signature = _sign_payload(payload_bytes)
+    payload_bytes = json.dumps(webhook.payload).encode("utf-8")
+    timestamp = str(int(time.time()))
+    signature = _sign_payload(timestamp, payload_bytes)
 
     webhook.attempt_count += 1
 
@@ -45,7 +48,9 @@ def deliver_webhook_attempt(webhook_delivery_id):
             data=payload_bytes,
             headers={
                 "Content-Type": "application/json",
-                "X-SafePay-Signature": f"sha256={signature}",
+                "X-SafePay-Event-Id": str(webhook.event_id),
+                "X-SafePay-Timestamp": timestamp,
+                "X-SafePay-Signature": signature,
             },
             timeout=5,
         )
