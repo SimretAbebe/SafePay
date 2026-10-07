@@ -53,14 +53,16 @@ class Payment(models.Model):
         ("succeeded", "Succeeded"),
         ("failed", "Failed"),
         ("cancelled", "Cancelled"),
+        ("expired", "Expired"),
     ]
 
     VALID_TRANSITIONS = {
-        "pending": ["processing", "cancelled"],
+        "pending": ["processing", "cancelled", "expired"],
         "processing": ["succeeded", "failed"],
         "succeeded": [],
         "failed": [],
         "cancelled": [],
+        "expired": [],
     }
 
     merchant = models.ForeignKey(
@@ -87,6 +89,16 @@ class Payment(models.Model):
         choices=STATUS_CHOICES,
         default="pending",
     )
+
+    provider = models.CharField(max_length=30, null=True, blank=True)
+    provider_reference = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    provider_status = models.CharField(max_length=50, null=True, blank=True)
+    checkout_url = models.URLField(max_length=500, null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -120,7 +132,15 @@ class Payment(models.Model):
             models.UniqueConstraint(
                 fields=["merchant", "idempotency_key"],
                 name="unique_idempotency_key_per_merchant",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["provider", "provider_reference"],
+                name="unique_provider_reference_per_provider",
+                condition=models.Q(
+                    provider__isnull=False,
+                    provider_reference__isnull=False,
+                ),
+            ),
         ]
 
     def __str__(self):
