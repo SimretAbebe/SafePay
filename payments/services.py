@@ -8,6 +8,7 @@ STATUS_TO_EVENT_TYPE = {
     "succeeded": "payment.succeeded",
     "failed": "payment.failed",
     "cancelled": "payment.cancelled",
+    "expired": "payment.expired",
 }
 
 
