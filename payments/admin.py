@@ -45,17 +45,28 @@ class PaymentAdmin(admin.ModelAdmin):
     list_display = (
         "idempotency_key",
         "merchant",
+        "provider",
+        "provider_reference",
+        "provider_status",
         "amount",
         "sender",
         "receiver",
         "status",
         "created_at",
     )
-    list_filter = ("status", "merchant")
-    search_fields = ("idempotency_key", "sender", "receiver")
+    list_filter = ("status", "merchant", "provider")
+    search_fields = ("idempotency_key", "sender", "receiver", "provider_reference")
     # status is read-only: editing it here would skip transition_to(),
     # bypass the state rules, and create no history row
-    readonly_fields = ("status", "created_at", "updated_at")
+    readonly_fields = (
+        "status",
+        "provider",
+        "provider_reference",
+        "provider_status",
+        "checkout_url",
+        "created_at",
+        "updated_at",
+    )
     inlines = [PaymentStatusHistoryInline]
     actions = ["mark_processing", "mark_succeeded"]
 
