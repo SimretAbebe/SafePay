@@ -14,7 +14,7 @@ from pathlib import Path
 import os
 import sys
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -92,6 +92,12 @@ WEBHOOK_TARGET_URL = os.getenv("WEBHOOK_TARGET_URL", "https://webhook.site/your-
 SAFE_PAY_API_KEY = os.getenv("SAFE_PAY_API_KEY", "dev-api-key-change-me")
 ENABLE_FAKE_PROVIDER = os.getenv("ENABLE_FAKE_PROVIDER", "False").lower() in ("true", "1")
 FAKE_PROVIDER_SECRET = os.getenv("FAKE_PROVIDER_SECRET", "fake-secret-for-tests")
+
+CHAPA_SECRET_KEY = os.getenv("CHAPA_SECRET_KEY", "")
+CHAPA_BASE_URL = os.getenv("CHAPA_BASE_URL", "https://api.chapa.co/v1")
+CHAPA_DEFAULT_CURRENCY = os.getenv("CHAPA_DEFAULT_CURRENCY", "ETB")
+CHAPA_RETURN_URL = os.getenv("CHAPA_RETURN_URL", None)
+CHAPA_REQUEST_TIMEOUT = int(os.getenv("CHAPA_REQUEST_TIMEOUT", "10"))
 
 
 
