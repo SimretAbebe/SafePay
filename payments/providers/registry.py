@@ -3,6 +3,7 @@ from typing import Dict
 from django.conf import settings
 
 from .base import PaymentProvider, ProviderError
+from .chapa import ChapaProvider
 from .fake import FakeProvider
 
 _registry: Dict[str, PaymentProvider] = {}
@@ -32,6 +33,10 @@ def get_provider(name: str) -> PaymentProvider:
     Retrieve a registered payment provider by name.
     Raises ProviderError if the provider is unknown or not enabled.
     """
+    if name == "chapa":
+        if "chapa" not in _registry:
+            _registry["chapa"] = ChapaProvider()
+
     if name == "fake":
         if is_fake_provider_enabled():
             if "fake" not in _registry:
@@ -50,6 +55,7 @@ def get_provider(name: str) -> PaymentProvider:
     return _registry[name]
 
 
-# Initialize default registry on module import if enabled
+# Initialize default registry on module import
+_registry["chapa"] = ChapaProvider()
 if is_fake_provider_enabled():
     _registry["fake"] = FakeProvider()
