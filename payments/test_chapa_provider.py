@@ -272,6 +272,58 @@ class ChapaProviderTests(SimpleTestCase):
         self.assertEqual(provider.name, "chapa")
         self.assertFalse(provider.supports_cancel)
 
+    # 11. initialize sends customer dict and payment.return_url
+    @patch("payments.providers.chapa.requests.post")
+    def test_initialize_with_customer_dict_and_return_url(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "status": "success",
+            "data": {"checkout_url": "https://checkout.chapa.co/pay/123"},
+        }
+        mock_post.return_value = mock_response
+
+        class SimplePayment:
+            amount = Decimal("300.00")
+            return_url = "https://merchant.example.com/callback"
+
+        customer = {
+            "email": "dict_customer@example.com",
+            "first_name": "Haile",
+            "last_name": "Gebrselassie",
+        }
+        result = self.provider.initialize(SimplePayment(), customer=customer)
+        self.assertEqual(result.checkout_url, "https://checkout.chapa.co/pay/123")
+
+        call_args, call_kwargs = mock_post.call_args
+        sent_payload = call_kwargs["json"]
+        self.assertEqual(sent_payload["email"], "dict_customer@example.com")
+        self.assertEqual(sent_payload["first_name"], "Haile")
+        self.assertEqual(sent_payload["last_name"], "Gebrselassie")
+        self.assertEqual(sent_payload["return_url"], "https://merchant.example.com/callback")
+
+    # 12. initialize falls back to settings.CHAPA_RETURN_URL if payment.return_url is None
+    @override_settings(CHAPA_RETURN_URL="https://default.example.com/fallback")
+    @patch("payments.providers.chapa.requests.post")
+    def test_initialize_fallback_to_settings_return_url(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "status": "success",
+            "data": {"checkout_url": "https://checkout.chapa.co/pay/123"},
+        }
+        mock_post.return_value = mock_response
+
+        class SimplePayment:
+            amount = Decimal("100.00")
+            return_url = None
+
+        self.provider.initialize(SimplePayment())
+        call_args, call_kwargs = mock_post.call_args
+        sent_payload = call_kwargs["json"]
+        self.assertEqual(sent_payload["return_url"], "https://default.example.com/fallback")
+
+
 
 class ChapaSmokeCommandTests(TestCase):
     @override_settings(CHAPA_SECRET_KEY="")

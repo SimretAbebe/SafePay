@@ -64,6 +64,8 @@ class PaymentAdmin(admin.ModelAdmin):
         "provider_reference",
         "provider_status",
         "checkout_url",
+        "merchant_reference",
+        "return_url",
         "created_at",
         "updated_at",
     )

@@ -51,32 +51,35 @@ class ChapaProvider(PaymentProvider):
             message = message.replace(secret_key, "[REDACTED]")
         return message
 
-    def initialize(self, payment: Any) -> InitResult:
+    def initialize(self, payment: Any, customer: Optional[dict] = None) -> InitResult:
+        """Create a Chapa transaction and return the provider reference and checkout URL."""
         config = self._get_config()
         secret_key = self._require_secret_key(config)
 
         tx_ref = f"sp-{uuid.uuid4().hex}"
-        url = f"{config['base_url']}/transaction/initialize"
-
+        amount = str(getattr(payment, "amount", "100.00"))
         payload: Dict[str, Any] = {
-            "amount": str(getattr(payment, "amount", "")),
+            "amount": amount,
             "currency": config["currency"],
             "tx_ref": tx_ref,
         }
-        if config.get("return_url"):
-            payload["return_url"] = config["return_url"]
 
-        # Customer fields: send only if payment or merchant has them, or defaults exist.
-        # TODO: Confirm which customer fields Chapa requires at developer.chapa.co.
-        email = getattr(payment, "customer_email", None) or getattr(payment, "email", None)
-        first_name = getattr(payment, "customer_first_name", None) or getattr(payment, "first_name", None)
-        last_name = getattr(payment, "customer_last_name", None) or getattr(payment, "last_name", None)
+        # Customer fields priority: customer dict > payment attributes
+        email = (customer.get("email") if customer else None) or getattr(payment, "customer_email", None)
+        first_name = (customer.get("first_name") if customer else None) or getattr(payment, "customer_first_name", None)
+        last_name = (customer.get("last_name") if customer else None) or getattr(payment, "customer_last_name", None)
+
         if email:
             payload["email"] = email
         if first_name:
             payload["first_name"] = first_name
         if last_name:
             payload["last_name"] = last_name
+
+        # return_url: payment.return_url fallback to config['return_url']
+        ret_url = getattr(payment, "return_url", None) or config.get("return_url")
+        if ret_url:
+            payload["return_url"] = ret_url
 
         headers = {
             "Authorization": f"Bearer {secret_key}",
@@ -85,7 +88,7 @@ class ChapaProvider(PaymentProvider):
 
         try:
             response = requests.post(
-                url,
+                f"{config['base_url']}/transaction/initialize",
                 json=payload,
                 headers=headers,
                 timeout=config["timeout"],
@@ -98,34 +101,26 @@ class ChapaProvider(PaymentProvider):
         try:
             data_json = response.json()
         except Exception:
-            raise ProviderError(
-                self._sanitize_error(
-                    f"Chapa initialize returned invalid JSON (HTTP {response.status_code})",
-                    secret_key,
-                )
-            )
+            raise ProviderError(self._sanitize_error(f"Chapa initialize returned invalid JSON (HTTP {response.status_code})", secret_key))
 
         if response.status_code != 200:
             err_msg = data_json.get("message") if isinstance(data_json, dict) else None
             detail = err_msg or f"HTTP {response.status_code}"
-            raise ProviderError(
-                self._sanitize_error(f"Chapa initialize failed: {detail}", secret_key)
-            )
+            raise ProviderError(self._sanitize_error(f"Chapa initialize failed: {detail}", secret_key))
 
         if not isinstance(data_json, dict) or data_json.get("status") != "success":
             msg = data_json.get("message", "Unknown error") if isinstance(data_json, dict) else "Invalid response"
-            raise ProviderError(
-                self._sanitize_error(f"Chapa initialize unsuccessful: {msg}", secret_key)
-            )
+            raise ProviderError(self._sanitize_error(f"Chapa initialize unsuccessful: {msg}", secret_key))
 
         data = data_json.get("data")
-        if not isinstance(data, dict) or "checkout_url" not in data or not data["checkout_url"]:
-            raise ProviderError("Chapa initialize response missing checkout_url")
+        if not isinstance(data, dict):
+            raise ProviderError(self._sanitize_error("Chapa initialize response missing data object", secret_key))
 
-        return InitResult(
-            provider_reference=tx_ref,
-            checkout_url=data["checkout_url"],
-        )
+        checkout_url = data.get("checkout_url")
+        if not checkout_url:
+            raise ProviderError(self._sanitize_error("Chapa initialize response missing checkout_url", secret_key))
+
+        return InitResult(provider_reference=tx_ref, checkout_url=checkout_url)
 
     def verify(self, provider_reference: str) -> ProviderStatusResult:
         config = self._get_config()

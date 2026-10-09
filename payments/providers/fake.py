@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import json
 import uuid
-from typing import Any, ClassVar, Dict
+from typing import Any, ClassVar, Dict, Optional
 
 from django.conf import settings
 
@@ -41,12 +41,14 @@ class FakeProvider(PaymentProvider):
             cls._store[reference] = {}
         cls._store[reference]["status"] = provider_status
 
-    def initialize(self, payment: Any) -> InitResult:
+    def initialize(self, payment: Any, customer: Optional[dict] = None) -> InitResult:
+        # The fake provider ignores any customer data; it is only for testing the interface.
         ref = f"fake_{uuid.uuid4().hex}"
         checkout_url = f"https://fake.local/pay/{ref}"
         self._store[ref] = {
             "status": "pending",
             "payment_id": getattr(payment, "id", None),
+            "customer": customer,
         }
         return InitResult(
             provider_reference=ref,
