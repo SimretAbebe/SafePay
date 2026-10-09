@@ -62,7 +62,7 @@ class PaymentProvider(ABC):
     supports_cancel: bool = True
 
     @abstractmethod
-    def initialize(self, payment: Any) -> InitResult:
+    def initialize(self, payment: Any, customer: Optional[dict] = None) -> InitResult:
         """Initialize a payment with the provider and obtain checkout info."""
         pass
 
