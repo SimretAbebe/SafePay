@@ -99,6 +99,8 @@ class Payment(models.Model):
     )
     provider_status = models.CharField(max_length=50, null=True, blank=True)
     checkout_url = models.URLField(max_length=500, null=True, blank=True)
+    merchant_reference = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    return_url = models.URLField(max_length=500, null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
