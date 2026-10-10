@@ -10,7 +10,7 @@ from .models import Payment
 from .permissions import HasAPIKey
 from .providers import ProviderError, get_provider
 from .serializers import CheckoutSessionSerializer, PaymentSerializer
-from .services import notify_status_change
+from .services import notify_status_change, sync_payment_from_provider
 from .tasks import log_payment_event
 from .throttling import PaymentRateThrottle
 
@@ -196,7 +196,22 @@ def payment_detail(request, pk):
 @api_view(["GET"])
 @permission_classes([HasAPIKey])
 def verify_payment(request, pk):
+    """
+    Verify payment status against the provider.
+    Asks the provider and is safe to repeat.
+    """
     payment = get_object_or_404(Payment, pk=pk, merchant=request.merchant)
+
+    if payment.provider:
+        try:
+            sync_result = sync_payment_from_provider(payment.pk)
+            payment = sync_result.payment
+        except ProviderError:
+            return Response(
+                {"detail": "Payment provider unavailable. Try again."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
     return Response(
         {
             "id": payment.id,
