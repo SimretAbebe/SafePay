@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import json
 import logging
 import uuid
 from typing import Any, Dict, Optional
@@ -9,7 +12,9 @@ from .base import (
     PaymentProvider,
     ProviderError,
     ProviderEvent,
+    ProviderSignatureError,
     ProviderStatusResult,
+    UnsupportedProviderStatus,
     validate_safepay_status,
 )
 
@@ -23,6 +28,7 @@ class ChapaProvider(PaymentProvider):
     def _get_config(self) -> Dict[str, Any]:
         """Read configuration lazily from Django settings at call time."""
         secret_key = getattr(settings, "CHAPA_SECRET_KEY", "") or ""
+        webhook_secret = getattr(settings, "CHAPA_WEBHOOK_SECRET", "") or ""
         base_url = (getattr(settings, "CHAPA_BASE_URL", "https://api.chapa.co/v1") or "https://api.chapa.co/v1").rstrip("/")
         currency = getattr(settings, "CHAPA_DEFAULT_CURRENCY", "ETB") or "ETB"
         return_url = getattr(settings, "CHAPA_RETURN_URL", None)
@@ -34,6 +40,7 @@ class ChapaProvider(PaymentProvider):
 
         return {
             "secret_key": secret_key,
+            "webhook_secret": webhook_secret,
             "base_url": base_url,
             "currency": currency,
             "return_url": return_url,
@@ -218,6 +225,113 @@ class ChapaProvider(PaymentProvider):
         # TODO: Verify Chapa cancel/void API endpoint and supported workflows at developer.chapa.co
         raise ProviderError("Chapa cancel is not implemented yet")
 
+    @staticmethod
+    def _get_header(headers: Any, key: str) -> Optional[str]:
+        if headers is None:
+            return None
+        if hasattr(headers, "get"):
+            val = headers.get(key)
+            if val is not None:
+                return str(val)
+            key_lower = key.lower()
+            if hasattr(headers, "items"):
+                for k, v in headers.items():
+                    if k.lower() == key_lower:
+                        return str(v)
+        return None
+
     def parse_webhook(self, headers: dict, body: bytes) -> ProviderEvent:
-        # TODO: Verify exact signature header (e.g. Chapa-Signature / x-chapa-signature) and verification method from official docs at developer.chapa.co first. Do not invent a signature scheme.
-        raise ProviderError("Chapa webhook parsing is not implemented yet")
+        config = self._get_config()
+        webhook_secret = config.get("webhook_secret", "")
+        if not webhook_secret or not str(webhook_secret).strip():
+            raise ProviderError("Chapa webhook secret is not configured")
+
+        secret_bytes = str(webhook_secret).strip().encode("utf-8")
+        body_bytes = body if isinstance(body, bytes) else str(body).encode("utf-8")
+
+        x_chapa_sig = self._get_header(headers, "x-chapa-signature")
+        chapa_sig = self._get_header(headers, "Chapa-Signature")
+
+        is_authenticated = False
+
+        if x_chapa_sig:
+            raw_hmac = hmac.new(secret_bytes, body_bytes, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(x_chapa_sig.strip(), raw_hmac):
+                is_authenticated = True
+            else:
+                try:
+                    parsed_for_reserialize = json.loads(body_bytes.decode("utf-8"))
+                    compact_json_bytes = json.dumps(parsed_for_reserialize, separators=(",", ":")).encode("utf-8")
+                    compact_hmac = hmac.new(secret_bytes, compact_json_bytes, hashlib.sha256).hexdigest()
+                    if hmac.compare_digest(x_chapa_sig.strip(), compact_hmac):
+                        is_authenticated = True
+                except Exception:
+                    pass
+
+        if not is_authenticated and chapa_sig:
+            secret_hmac = hmac.new(secret_bytes, secret_bytes, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(chapa_sig.strip(), secret_hmac):
+                is_authenticated = True
+
+        if not is_authenticated:
+            raise ProviderSignatureError("Invalid webhook signature.")
+
+        try:
+            payload = json.loads(body_bytes.decode("utf-8"))
+        except Exception as exc:
+            raise ProviderError(f"Malformed JSON payload: {exc}") from exc
+
+        if not isinstance(payload, dict):
+            raise ProviderError("Webhook body must be a JSON object.")
+
+        tx_ref = payload.get("tx_ref")
+        if not tx_ref and isinstance(payload.get("data"), dict):
+            tx_ref = payload["data"].get("tx_ref")
+
+        if not tx_ref:
+            raise ProviderError("Webhook payload missing required 'tx_ref' field.")
+
+        event_type = payload.get("event") or payload.get("type")
+        if not event_type and isinstance(payload.get("data"), dict):
+            event_type = payload["data"].get("event") or payload["data"].get("type")
+
+        raw_status = payload.get("status")
+        if raw_status is None and isinstance(payload.get("data"), dict):
+            raw_status = payload["data"].get("status")
+
+        if not raw_status:
+            raise UnsupportedProviderStatus(
+                "Webhook payload missing status",
+                provider_reference=str(tx_ref),
+                event_type=str(event_type) if event_type else None,
+            )
+
+        status_normalized = str(raw_status).strip().lower()
+        if status_normalized in ("refunded", "reversed"):
+            raise UnsupportedProviderStatus(
+                f"Unsupported status '{raw_status}'",
+                provider_reference=str(tx_ref),
+                event_type=str(event_type) if event_type else None,
+            )
+
+        try:
+            mapped_status = self.map_status(raw_status)
+        except ProviderError as exc:
+            raise UnsupportedProviderStatus(
+                f"Unsupported status '{raw_status}'",
+                provider_reference=str(tx_ref),
+                event_type=str(event_type) if event_type else None,
+            ) from exc
+
+        # TODO: Verify at developer.chapa.co:
+        # 1. Exact webhook payload field structure (tx_ref, status at root vs data object).
+        # 2. Exact event type field naming ('event' vs 'type').
+        # 3. Which secret Chapa signs webhooks with (CHAPA_WEBHOOK_SECRET vs CHAPA_SECRET_KEY).
+
+        return ProviderEvent(
+            provider="chapa",
+            provider_reference=str(tx_ref),
+            status=mapped_status,
+            event_id=None,
+            raw=payload,
+        )
