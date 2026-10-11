@@ -23,6 +23,7 @@ class DummyPayment:
 
 @override_settings(
     CHAPA_SECRET_KEY="test-secret-123",
+    CHAPA_WEBHOOK_SECRET="",
     CHAPA_BASE_URL="https://api.chapa.co/v1",
     CHAPA_DEFAULT_CURRENCY="ETB",
     CHAPA_REQUEST_TIMEOUT=10,
@@ -259,11 +260,12 @@ class ChapaProviderTests(SimpleTestCase):
             self.provider.cancel("sp-123456")
         self.assertEqual(str(ctx_cancel.exception), "Chapa cancel is not implemented yet")
 
-        with self.assertRaises(ProviderError) as ctx_webhook:
-            self.provider.parse_webhook(headers={}, body=b"{}")
-        self.assertEqual(
-            str(ctx_webhook.exception), "Chapa webhook parsing is not implemented yet"
-        )
+        with override_settings(CHAPA_WEBHOOK_SECRET=""):
+            with self.assertRaises(ProviderError) as ctx_webhook:
+                self.provider.parse_webhook(headers={}, body=b"{}")
+            self.assertEqual(
+                str(ctx_webhook.exception), "Chapa webhook secret is not configured"
+            )
 
     # 10. get_provider("chapa") returns a ChapaProvider
     def test_get_provider_chapa(self):

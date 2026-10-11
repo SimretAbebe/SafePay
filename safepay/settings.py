@@ -95,6 +95,7 @@ DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "chapa")
 FAKE_PROVIDER_SECRET = os.getenv("FAKE_PROVIDER_SECRET", "fake-secret-for-tests")
 
 CHAPA_SECRET_KEY = os.getenv("CHAPA_SECRET_KEY", "")
+CHAPA_WEBHOOK_SECRET = os.getenv("CHAPA_WEBHOOK_SECRET", "")
 CHAPA_BASE_URL = os.getenv("CHAPA_BASE_URL", "https://api.chapa.co/v1")
 CHAPA_DEFAULT_CURRENCY = os.getenv("CHAPA_DEFAULT_CURRENCY", "ETB")
 CHAPA_RETURN_URL = os.getenv("CHAPA_RETURN_URL", None)

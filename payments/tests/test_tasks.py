@@ -1,6 +1,6 @@
 from django.test import TestCase
 
-from .tasks import log_payment_event
+from payments.tasks import log_payment_event
 
 
 class CeleryTaskTests(TestCase):

@@ -4,8 +4,8 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from .models import Merchant, Payment
-from .test_utils import create_test_merchant
+from payments.models import Merchant, Payment
+from payments.test_utils import create_test_merchant
 
 
 class MerchantAccountTests(TestCase):

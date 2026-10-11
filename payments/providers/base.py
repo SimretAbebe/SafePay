@@ -17,6 +17,25 @@ class ProviderError(Exception):
     pass
 
 
+class ProviderSignatureError(ProviderError):
+    """Raised when incoming webhook signature verification fails."""
+    pass
+
+
+class UnsupportedProviderStatus(ProviderError):
+    """Raised when an incoming webhook status is refunded, reversed, or unmapped."""
+
+    def __init__(
+        self,
+        message: str,
+        provider_reference: Optional[str] = None,
+        event_type: Optional[str] = None,
+    ):
+        super().__init__(message)
+        self.provider_reference = provider_reference
+        self.event_type = event_type
+
+
 @dataclass
 class InitResult:
     provider_reference: str

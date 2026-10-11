@@ -1,14 +1,24 @@
+import hashlib
 import logging
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
 
-from .models import Payment
+from .models import InboundWebhookEvent, Payment
 from .permissions import HasAPIKey
-from .providers import ProviderError, get_provider
+from .providers import (
+    ChapaProvider,
+    ProviderError,
+    ProviderSignatureError,
+    UnsupportedProviderStatus,
+    get_provider,
+)
 from .serializers import CheckoutSessionSerializer, PaymentSerializer
 from .services import notify_status_change, sync_payment_from_provider
 from .tasks import log_payment_event
@@ -272,3 +282,112 @@ def cancel_payment(request, pk):
         {"id": payment.id, "status": "cancelled"},
         status=status.HTTP_200_OK,
     )
+
+
+@csrf_exempt
+@require_POST
+def chapa_webhook(request):
+    body = request.body
+    body_sha256 = hashlib.sha256(body).hexdigest()
+
+    provider = ChapaProvider()
+    try:
+        event = provider.parse_webhook(request.headers, body)
+    except ProviderSignatureError:
+        InboundWebhookEvent.objects.create(
+            provider="chapa",
+            signature_valid=False,
+            outcome="signature_rejected",
+            body_sha256=body_sha256,
+        )
+        return JsonResponse({"detail": "Invalid signature."}, status=401)
+    except UnsupportedProviderStatus as exc:
+        InboundWebhookEvent.objects.create(
+            provider="chapa",
+            signature_valid=True,
+            provider_reference=getattr(exc, "provider_reference", None),
+            event_type=getattr(exc, "event_type", None),
+            outcome="ignored_unsupported",
+            body_sha256=body_sha256,
+        )
+        return JsonResponse({"status": "ignored"}, status=200)
+    except ProviderError as exc:
+        if "Chapa webhook secret is not configured" in str(exc):
+            InboundWebhookEvent.objects.create(
+                provider="chapa",
+                signature_valid=False,
+                outcome="not_configured",
+                body_sha256=body_sha256,
+            )
+            return JsonResponse(
+                {"detail": "Webhook receiver is not configured."},
+                status=503,
+            )
+
+        InboundWebhookEvent.objects.create(
+            provider="chapa",
+            signature_valid=True,
+            outcome="invalid_payload",
+            body_sha256=body_sha256,
+        )
+        return JsonResponse({"detail": "Invalid webhook payload."}, status=400)
+    except Exception:
+        InboundWebhookEvent.objects.create(
+            provider="chapa",
+            signature_valid=False,
+            outcome="signature_rejected",
+            body_sha256=body_sha256,
+        )
+        return JsonResponse({"detail": "Invalid signature."}, status=401)
+
+    tx_ref = event.provider_reference
+    event_type = None
+    if isinstance(event.raw, dict):
+        event_type = event.raw.get("event") or event.raw.get("type")
+        if not event_type and isinstance(event.raw.get("data"), dict):
+            event_type = event.raw["data"].get("event") or event.raw["data"].get("type")
+
+    payment = Payment.objects.filter(provider="chapa", provider_reference=tx_ref).first()
+    if not payment:
+        InboundWebhookEvent.objects.create(
+            provider="chapa",
+            signature_valid=True,
+            provider_reference=tx_ref,
+            event_type=event_type,
+            outcome="unknown_reference",
+            body_sha256=body_sha256,
+        )
+        return JsonResponse({"status": "ignored"}, status=200)
+
+    try:
+        sync_result = sync_payment_from_provider(payment.id)
+    except ProviderError:
+        InboundWebhookEvent.objects.create(
+            provider="chapa",
+            signature_valid=True,
+            provider_reference=tx_ref,
+            event_type=event_type,
+            outcome="verify_failed",
+            body_sha256=body_sha256,
+        )
+        return JsonResponse(
+            {"detail": "Temporarily unable to confirm. Retry later."},
+            status=503,
+        )
+
+    if sync_result.outcome == "updated":
+        event_outcome = "processed_updated"
+    elif sync_result.outcome == "unchanged":
+        event_outcome = "processed_unchanged"
+    else:
+        event_outcome = "mismatch"
+
+    InboundWebhookEvent.objects.create(
+        provider="chapa",
+        signature_valid=True,
+        provider_reference=tx_ref,
+        event_type=event_type,
+        outcome=event_outcome,
+        body_sha256=body_sha256,
+    )
+    return JsonResponse({"status": "ok"}, status=200)

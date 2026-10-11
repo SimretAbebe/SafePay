@@ -2,8 +2,8 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import Payment, InvalidStateTransition
-from .test_utils import create_test_merchant
+from payments.models import Payment, InvalidStateTransition
+from payments.test_utils import create_test_merchant
 
 
 class PaymentModelTests(TestCase):

@@ -4,8 +4,8 @@ from django.db import connection
 from django.test import TransactionTestCase
 from rest_framework.test import APIClient
 
-from .models import Payment
-from .test_utils import create_test_merchant
+from payments.models import Payment
+from payments.test_utils import create_test_merchant
 
 
 class PaymentConcurrencyTests(TransactionTestCase):

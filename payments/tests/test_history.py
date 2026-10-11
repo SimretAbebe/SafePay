@@ -1,5 +1,5 @@
 from django.test import TestCase
-from .models import Payment, PaymentStatusHistory, InvalidStateTransition
+from payments.models import Payment, PaymentStatusHistory, InvalidStateTransition
 
 
 class PaymentStatusHistoryTests(TestCase):
