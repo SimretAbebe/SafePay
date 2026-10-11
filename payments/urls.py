@@ -8,4 +8,5 @@ urlpatterns = [
     path("payments/<int:pk>/verify/", views.verify_payment, name="verify_payment"),
     path("payments/<int:pk>/cancel/", views.cancel_payment, name="cancel_payment"),
     path("checkout/sessions/", views.create_checkout_session, name="create_checkout_session"),
+    path("webhooks/chapa/", views.chapa_webhook, name="chapa_webhook"),
 ]
