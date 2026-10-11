@@ -2,8 +2,8 @@ from unittest.mock import patch, MagicMock
 
 from django.test import TestCase
 
-from .models import Payment, WebhookDelivery
-from .services import notify_status_change
+from payments.models import Payment, WebhookDelivery
+from payments.services import notify_status_change
 
 
 class WebhookDeliveryTests(TestCase):
@@ -65,7 +65,7 @@ class WebhookDeliveryTests(TestCase):
         import hashlib
         import hmac
         from django.conf import settings
-        from .webhook_verification import verify_webhook
+        from payments.webhook_verification import verify_webhook
 
         mock_post.return_value = MagicMock(status_code=200)
 

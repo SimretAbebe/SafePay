@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 from django.conf import settings
 from django.test import TestCase
 
-from .models import Payment, WebhookDelivery
-from .services import notify_status_change
-from .webhook_verification import verify_webhook
+from payments.models import Payment, WebhookDelivery
+from payments.services import notify_status_change
+from payments.webhook_verification import verify_webhook
 
 
 class WebhookSecurityAndStructureTests(TestCase):
