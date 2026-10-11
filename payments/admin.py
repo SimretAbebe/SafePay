@@ -1,6 +1,7 @@
 from django.contrib import admin, messages
 
 from .models import (
+    InboundWebhookEvent,
     InvalidStateTransition,
     Merchant,
     Payment,
@@ -120,3 +121,37 @@ class WebhookDeliveryAdmin(admin.ModelAdmin):
     search_fields = ("event_id", "event_type", "payment__idempotency_key", "target_url")
     readonly_fields = ("event_id", "event_type", "created_at", "updated_at")
     actions = [retry_webhook_deliveries]
+
+
+@admin.register(InboundWebhookEvent)
+class InboundWebhookEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "provider",
+        "provider_reference",
+        "event_type",
+        "outcome",
+        "signature_valid",
+        "body_sha256",
+        "received_at",
+    )
+    list_filter = ("outcome", "signature_valid")
+    search_fields = ("provider_reference", "event_type", "body_sha256")
+    readonly_fields = (
+        "provider",
+        "received_at",
+        "signature_valid",
+        "provider_reference",
+        "event_type",
+        "outcome",
+        "body_sha256",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
