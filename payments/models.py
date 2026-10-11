@@ -214,3 +214,30 @@ class PaymentStatusHistory(models.Model):
 
     def __str__(self):
         return f"{self.payment.idempotency_key}: {self.from_status} -> {self.to_status}"
+
+
+class InboundWebhookEvent(models.Model):
+    OUTCOME_CHOICES = [
+        ("signature_rejected", "Signature Rejected"),
+        ("not_configured", "Not Configured"),
+        ("unknown_reference", "Unknown Reference"),
+        ("ignored_unsupported", "Ignored Unsupported"),
+        ("processed_unchanged", "Processed Unchanged"),
+        ("processed_updated", "Processed Updated"),
+        ("mismatch", "Mismatch"),
+        ("verify_failed", "Verify Failed"),
+    ]
+
+    provider = models.CharField(max_length=30)
+    received_at = models.DateTimeField(auto_now_add=True)
+    signature_valid = models.BooleanField()
+    provider_reference = models.CharField(max_length=100, null=True, blank=True)
+    event_type = models.CharField(max_length=50, null=True, blank=True)
+    outcome = models.CharField(max_length=30)
+    body_sha256 = models.CharField(max_length=64)
+
+    class Meta:
+        ordering = ["-received_at"]
+
+    def __str__(self):
+        return f"{self.provider} ({self.outcome}) ref={self.provider_reference}"
