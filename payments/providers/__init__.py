@@ -3,7 +3,9 @@ from .base import (
     PaymentProvider,
     ProviderError,
     ProviderEvent,
+    ProviderSignatureError,
     ProviderStatusResult,
+    UnsupportedProviderStatus,
     validate_safepay_status,
 )
 from .chapa import ChapaProvider
@@ -13,6 +15,8 @@ from .registry import get_provider, register_provider
 __all__ = [
     "PaymentProvider",
     "ProviderError",
+    "ProviderSignatureError",
+    "UnsupportedProviderStatus",
     "InitResult",
     "ProviderStatusResult",
     "ProviderEvent",
