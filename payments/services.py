@@ -1,12 +1,15 @@
 import logging
+import random
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from .models import Payment, WebhookDelivery
-from .providers import get_provider
+from .providers import ProviderError, UnsupportedProviderStatus, get_provider
 from .tasks import deliver_webhook_attempt
 
 logger = logging.getLogger(__name__)
@@ -153,4 +156,177 @@ def sync_payment_from_provider(payment_id) -> SyncResult:
             p = payment
             transaction.on_commit(lambda: notify_status_change(p))
 
-        return SyncResult(outcome=outcome, payment=payment)
+        return SyncResult(outcome=outcome, payment=payment)
+
+
+@dataclass
+class ReconcileResult:
+    outcome: str
+    payment: Any
+
+    def __getitem__(self, item):
+        if item == "outcome":
+            return self.outcome
+        if item == "payment":
+            return self.payment
+        raise KeyError(item)
+
+
+def backoff_delay(attempt: int, jitter: float | None = None, rng=None) -> int:
+    delays = getattr(
+        settings,
+        "RECONCILE_BACKOFF_SECONDS",
+        [60, 120, 300, 900, 3600, 3600, 3600, 3600],
+    )
+    idx = min(max(0, attempt - 1), len(delays) - 1)
+    base = delays[idx]
+    if jitter is None:
+        jitter = getattr(settings, "RECONCILE_JITTER", 0.1)
+    if jitter == 0:
+        return int(base)
+    r = rng if rng is not None else random
+    delta = r.uniform(-jitter, jitter)
+    return max(1, int(round(base * (1 + delta))))
+
+
+def schedule_first_check(payment):
+    now = timezone.now()
+    delay = getattr(settings, "RECONCILE_FIRST_CHECK_DELAY_SECONDS", 300)
+    payment.next_sync_at = now + timedelta(seconds=delay)
+    payment.save(update_fields=["next_sync_at", "updated_at"])
+    return payment
+
+
+def reconcile_one(payment_id, now=None) -> ReconcileResult:
+    if now is None:
+        now = timezone.now()
+
+    pk = getattr(payment_id, "pk", payment_id)
+
+    with transaction.atomic():
+        try:
+            payment = Payment.objects.select_for_update().get(pk=pk)
+        except Payment.DoesNotExist:
+            return ReconcileResult(outcome="skipped", payment=None)
+
+        # 1. Skip if no provider, no provider_reference, or already flagged for review
+        if not payment.provider or not payment.provider_reference or payment.needs_review:
+            if payment.status != "pending" and payment.next_sync_at is not None:
+                payment.next_sync_at = None
+                payment.save(update_fields=["next_sync_at", "updated_at"])
+            return ReconcileResult(outcome="skipped", payment=payment)
+
+        max_attempts = getattr(settings, "RECONCILE_MAX_ATTEMPTS", 8)
+
+        # 2. Call sync_payment_from_provider logic (reuse it; safe inside outer transaction)
+        try:
+            sync_result = sync_payment_from_provider(payment.pk)
+            payment = sync_result.payment
+            payment.last_synced_at = now
+
+            if sync_result.outcome == "mismatch":
+                payment.needs_review = True
+                payment.review_reason = "mismatch"
+                payment.next_sync_at = None
+                payment.save(
+                    update_fields=[
+                        "needs_review",
+                        "review_reason",
+                        "next_sync_at",
+                        "last_synced_at",
+                        "updated_at",
+                    ]
+                )
+                return ReconcileResult(outcome="mismatch", payment=payment)
+
+            # If payment reached terminal state (succeeded, failed, cancelled, expired)
+            if payment.status in TERMINAL_STATUSES:
+                payment.next_sync_at = None
+                payment.save(
+                    update_fields=["next_sync_at", "last_synced_at", "updated_at"]
+                )
+                if sync_result.outcome == "updated":
+                    return ReconcileResult(outcome=payment.status, payment=payment)
+                else:
+                    return ReconcileResult(outcome="skipped", payment=payment)
+
+            # Reachable but still pending
+            payment.sync_attempts += 1
+            if payment.sync_attempts >= max_attempts:
+                # TODO: A later expiry feature will handle abandoned payments
+                payment.next_sync_at = None
+            else:
+                delay = backoff_delay(payment.sync_attempts)
+                payment.next_sync_at = now + timedelta(seconds=delay)
+
+            payment.save(
+                update_fields=[
+                    "sync_attempts",
+                    "next_sync_at",
+                    "last_synced_at",
+                    "updated_at",
+                ]
+            )
+            return ReconcileResult(outcome="pending", payment=payment)
+
+        except UnsupportedProviderStatus:
+            payment.last_synced_at = now
+            payment.needs_review = True
+            payment.review_reason = "unsupported_status"
+            payment.next_sync_at = None
+            payment.save(
+                update_fields=[
+                    "needs_review",
+                    "review_reason",
+                    "next_sync_at",
+                    "last_synced_at",
+                    "updated_at",
+                ]
+            )
+            return ReconcileResult(outcome="unsupported_status", payment=payment)
+
+        except ProviderError:
+            payment.last_synced_at = now
+            payment.sync_attempts += 1
+            if payment.sync_attempts >= max_attempts:
+                payment.needs_review = True
+                payment.review_reason = "unknown_outcome"
+                payment.next_sync_at = None
+            else:
+                delay = backoff_delay(payment.sync_attempts)
+                payment.next_sync_at = now + timedelta(seconds=delay)
+            payment.save(
+                update_fields=[
+                    "sync_attempts",
+                    "needs_review",
+                    "review_reason",
+                    "next_sync_at",
+                    "last_synced_at",
+                    "updated_at",
+                ]
+            )
+            return ReconcileResult(outcome="unknown", payment=payment)
+
+        except Exception:
+            logger.exception("Unexpected error during reconciliation of payment %s", payment.id)
+            payment.last_synced_at = now
+            payment.sync_attempts += 1
+            if payment.sync_attempts >= max_attempts:
+                payment.needs_review = True
+                payment.review_reason = "unknown_outcome"
+                payment.next_sync_at = None
+            else:
+                delay = backoff_delay(payment.sync_attempts)
+                payment.next_sync_at = now + timedelta(seconds=delay)
+            payment.save(
+                update_fields=[
+                    "sync_attempts",
+                    "needs_review",
+                    "review_reason",
+                    "next_sync_at",
+                    "last_synced_at",
+                    "updated_at",
+                ]
+            )
+            return ReconcileResult(outcome="unknown", payment=payment)
+

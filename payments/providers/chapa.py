@@ -198,13 +198,13 @@ class ChapaProvider(PaymentProvider):
 
     def map_status(self, provider_status: str) -> str:
         if not provider_status:
-            raise ProviderError("unsupported provider status")
+            raise UnsupportedProviderStatus("unsupported provider status")
 
         status_normalized = str(provider_status).strip().lower()
 
         # Specific unsupported statuses per spec
         if status_normalized in ("refunded", "reversed"):
-            raise ProviderError(f"unsupported provider status: '{provider_status}'")
+            raise UnsupportedProviderStatus(f"unsupported provider status: '{provider_status}'")
 
         status_mapping = {
             "pending": "pending",
@@ -216,7 +216,7 @@ class ChapaProvider(PaymentProvider):
         }
 
         if status_normalized not in status_mapping:
-            raise ProviderError(f"unsupported provider status: '{provider_status}'")
+            raise UnsupportedProviderStatus(f"unsupported provider status: '{provider_status}'")
 
         mapped_status = status_mapping[status_normalized]
         return validate_safepay_status(mapped_status)

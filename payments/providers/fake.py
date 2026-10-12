@@ -12,6 +12,7 @@ from .base import (
     ProviderError,
     ProviderEvent,
     ProviderStatusResult,
+    UnsupportedProviderStatus,
     validate_safepay_status,
 )
 
@@ -57,9 +58,9 @@ class FakeProvider(PaymentProvider):
 
     def map_status(self, provider_status: str) -> str:
         if provider_status in ("refunded", "reversed"):
-            raise ProviderError("unsupported provider status")
+            raise UnsupportedProviderStatus("unsupported provider status")
         if provider_status not in self.STATUS_MAPPING:
-            raise ProviderError(
+            raise UnsupportedProviderStatus(
                 f"Unknown fake provider status: '{provider_status}'"
             )
         safepay_status = self.STATUS_MAPPING[provider_status]

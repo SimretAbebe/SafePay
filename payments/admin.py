@@ -1,4 +1,5 @@
 from django.contrib import admin, messages
+from django.utils import timezone
 
 from .models import (
     InboundWebhookEvent,
@@ -8,7 +9,7 @@ from .models import (
     PaymentStatusHistory,
     WebhookDelivery,
 )
-from .tasks import deliver_webhook_attempt
+from .tasks import deliver_webhook_attempt, reconcile_payment
 
 
 @admin.register(Merchant)
@@ -53,9 +54,14 @@ class PaymentAdmin(admin.ModelAdmin):
         "sender",
         "receiver",
         "status",
+        "sync_attempts",
+        "next_sync_at",
+        "last_synced_at",
+        "needs_review",
+        "review_reason",
         "created_at",
     )
-    list_filter = ("status", "merchant", "provider")
+    list_filter = ("status", "merchant", "provider", "needs_review")
     search_fields = ("idempotency_key", "sender", "receiver", "provider_reference")
     # status is read-only: editing it here would skip transition_to(),
     # bypass the state rules, and create no history row
@@ -67,11 +73,21 @@ class PaymentAdmin(admin.ModelAdmin):
         "checkout_url",
         "merchant_reference",
         "return_url",
+        "sync_attempts",
+        "next_sync_at",
+        "last_synced_at",
+        "needs_review",
+        "review_reason",
         "created_at",
         "updated_at",
     )
     inlines = [PaymentStatusHistoryInline]
-    actions = ["mark_processing", "mark_succeeded"]
+    actions = [
+        "mark_processing",
+        "mark_succeeded",
+        "check_with_provider_now",
+        "clear_review_and_recheck",
+    ]
 
     def _move(self, request, queryset, new_status):
         for payment in queryset:
@@ -87,6 +103,25 @@ class PaymentAdmin(admin.ModelAdmin):
     @admin.action(description="Move selected payments to succeeded")
     def mark_succeeded(self, request, queryset):
         self._move(request, queryset, "succeeded")
+
+    @admin.action(description="Check with provider now")
+    def check_with_provider_now(self, request, queryset):
+        count = 0
+        for payment in queryset:
+            reconcile_payment.delay(payment.id)
+            count += 1
+        self.message_user(request, f"{count} payment(s) queued for provider check.", level=messages.SUCCESS)
+
+    @admin.action(description="Clear review flag and re-check")
+    def clear_review_and_recheck(self, request, queryset):
+        now = timezone.now()
+        count = queryset.update(
+            needs_review=False,
+            review_reason="",
+            sync_attempts=0,
+            next_sync_at=now,
+        )
+        self.message_user(request, f"{count} payment(s) review flag cleared and queued for check.", level=messages.SUCCESS)
 
 
 @admin.action(description="Retry selected webhook deliveries")

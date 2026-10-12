@@ -20,7 +20,7 @@ from .providers import (
     get_provider,
 )
 from .serializers import CheckoutSessionSerializer, PaymentSerializer
-from .services import notify_status_change, sync_payment_from_provider
+from .services import notify_status_change, schedule_first_check, sync_payment_from_provider
 from .tasks import log_payment_event
 from .throttling import PaymentRateThrottle
 
@@ -173,6 +173,7 @@ def create_checkout_session(request):
             locked_payment.save(
                 update_fields=["provider", "provider_reference", "checkout_url", "updated_at"]
             )
+            schedule_first_check(locked_payment)
     except ProviderError as exc:
         logger.warning("Checkout session provider failure: %s", exc)
         return Response(

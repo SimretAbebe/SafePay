@@ -34,6 +34,22 @@ services:
       - db
       - redis
 
+  beat:
+    build: .
+    command: celery -A safepay beat --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      DB_NAME: safepay
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: db
+      DB_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
   db:
     image: postgres:16
     environment:

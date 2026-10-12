@@ -102,6 +102,12 @@ class Payment(models.Model):
     merchant_reference = models.CharField(max_length=100, null=True, blank=True, db_index=True)
     return_url = models.URLField(max_length=500, null=True, blank=True)
 
+    next_sync_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    sync_attempts = models.PositiveSmallIntegerField(default=0)
+    needs_review = models.BooleanField(default=False, db_index=True)
+    review_reason = models.CharField(max_length=40, blank=True, default="")
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
