@@ -16,4 +16,4 @@ staticfiles/
 
 # IDE
 .vscode/
-.idea/
+.idea/celerybeat-schedule*
