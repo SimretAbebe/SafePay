@@ -101,8 +101,21 @@ CHAPA_DEFAULT_CURRENCY = os.getenv("CHAPA_DEFAULT_CURRENCY", "ETB")
 CHAPA_RETURN_URL = os.getenv("CHAPA_RETURN_URL", None)
 CHAPA_REQUEST_TIMEOUT = int(os.getenv("CHAPA_REQUEST_TIMEOUT", "10"))
 
+RECONCILE_SWEEP_SECONDS = int(os.getenv("RECONCILE_SWEEP_SECONDS", "60"))
+RECONCILE_FIRST_CHECK_DELAY_SECONDS = int(os.getenv("RECONCILE_FIRST_CHECK_DELAY_SECONDS", "300"))
+_raw_backoff = os.getenv("RECONCILE_BACKOFF_SECONDS", "60,120,300,900,3600,3600,3600,3600")
+RECONCILE_BACKOFF_SECONDS = [int(x.strip()) for x in _raw_backoff.split(",") if x.strip()]
+RECONCILE_MAX_ATTEMPTS = int(os.getenv("RECONCILE_MAX_ATTEMPTS", "8"))
+RECONCILE_BATCH_SIZE = int(os.getenv("RECONCILE_BATCH_SIZE", "50"))
+RECONCILE_LEASE_SECONDS = int(os.getenv("RECONCILE_LEASE_SECONDS", "120"))
+RECONCILE_JITTER = float(os.getenv("RECONCILE_JITTER", "0.1"))
 
-
+CELERY_BEAT_SCHEDULE = {
+    "reconcile_pending_payments": {
+        "task": "payments.tasks.reconcile_pending_payments",
+        "schedule": RECONCILE_SWEEP_SECONDS,
+    },
+}
 
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://localhost:6379/0")

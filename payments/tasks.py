@@ -1,3 +1,4 @@
+from datetime import timedelta
 import hashlib
 import hmac
 import json
@@ -7,8 +8,11 @@ import time
 import requests
 from celery import shared_task
 from django.conf import settings
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
 
-from .models import WebhookDelivery
+from .models import Payment, WebhookDelivery
 
 logger = logging.getLogger(__name__)
 
@@ -85,3 +89,69 @@ def deliver_webhook_attempt(webhook_delivery_id):
             args=[webhook_delivery_id],
             countdown=backoff_seconds,
         )
+
+
+@shared_task
+def reconcile_payment(payment_id):
+    from .services import reconcile_one
+
+    result = reconcile_one(payment_id)
+    payment = result.payment
+    sync_attempts = getattr(payment, "sync_attempts", None) if payment else None
+    logger.info(
+        "Reconciled payment %s: outcome=%s, sync_attempts=%s",
+        payment_id,
+        result.outcome,
+        sync_attempts,
+    )
+    return result.outcome
+
+
+@shared_task
+def reconcile_pending_payments():
+    now = timezone.now()
+    first_check_delay = getattr(settings, "RECONCILE_FIRST_CHECK_DELAY_SECONDS", 300)
+    lease_seconds = getattr(settings, "RECONCILE_LEASE_SECONDS", 120)
+    batch_size = getattr(settings, "RECONCILE_BATCH_SIZE", 50)
+
+    first_check_cutoff = now - timedelta(seconds=first_check_delay)
+    lease_until = now + timedelta(seconds=lease_seconds)
+
+    due_filter = (
+        Q(status="pending")
+        & Q(provider__isnull=False)
+        & ~Q(provider="")
+        & Q(provider_reference__isnull=False)
+        & ~Q(provider_reference="")
+        & Q(needs_review=False)
+        & (
+            Q(next_sync_at__lte=now)
+            | (Q(next_sync_at__isnull=True) & Q(created_at__lte=first_check_cutoff))
+        )
+    )
+
+    dispatched_ids = []
+    with transaction.atomic():
+        due_qs = (
+            Payment.objects.select_for_update(skip_locked=True)
+            .filter(due_filter)
+            .order_by("next_sync_at")[:batch_size]
+        )
+        selected_payments = list(due_qs)
+        for payment in selected_payments:
+            payment.next_sync_at = lease_until
+            payment.save(update_fields=["next_sync_at", "updated_at"])
+            dispatched_ids.append(payment.id)
+
+    # After the transaction commits, call reconcile_payment.delay(id) for each
+    for payment_id in dispatched_ids:
+        reconcile_payment.delay(payment_id)
+
+    due_count = len(selected_payments)
+    dispatched_count = len(dispatched_ids)
+    logger.info(
+        "Reconciliation sweep: %d due payments found, %d dispatched",
+        due_count,
+        dispatched_count,
+    )
+    return {"due_count": due_count, "dispatched_count": dispatched_count}
