@@ -4,6 +4,7 @@ from django.conf import settings
 
 from .base import PaymentProvider, ProviderError
 from .chapa import ChapaProvider
+from .arifpay import ArifPayProvider
 from .fake import FakeProvider
 
 _registry: Dict[str, PaymentProvider] = {}
@@ -36,6 +37,9 @@ def get_provider(name: str) -> PaymentProvider:
     if name == "chapa":
         if "chapa" not in _registry:
             _registry["chapa"] = ChapaProvider()
+    elif name == "arifpay":
+        if "arifpay" not in _registry:
+            _registry["arifpay"] = ArifPayProvider()
 
     if name == "fake":
         if is_fake_provider_enabled():
@@ -57,5 +61,6 @@ def get_provider(name: str) -> PaymentProvider:
 
 # Initialize default registry on module import
 _registry["chapa"] = ChapaProvider()
+_registry["arifpay"] = ArifPayProvider()
 if is_fake_provider_enabled():
     _registry["fake"] = FakeProvider()

@@ -8,6 +8,7 @@ from .base import (
     UnsupportedProviderStatus,
     validate_safepay_status,
 )
+from .arifpay import ArifPayProvider
 from .chapa import ChapaProvider
 from .fake import FakeProvider
 from .registry import get_provider, register_provider
@@ -21,6 +22,7 @@ __all__ = [
     "ProviderStatusResult",
     "ProviderEvent",
     "validate_safepay_status",
+    "ArifPayProvider",
     "ChapaProvider",
     "FakeProvider",
     "register_provider",
