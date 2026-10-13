@@ -101,6 +101,18 @@ CHAPA_DEFAULT_CURRENCY = os.getenv("CHAPA_DEFAULT_CURRENCY", "ETB")
 CHAPA_RETURN_URL = os.getenv("CHAPA_RETURN_URL", None)
 CHAPA_REQUEST_TIMEOUT = int(os.getenv("CHAPA_REQUEST_TIMEOUT", "10"))
 
+ARIFPAY_API_KEY = os.getenv("ARIFPAY_API_KEY", "")
+ARIFPAY_SANDBOX = os.getenv("ARIFPAY_SANDBOX", "True").lower() in ("true", "1")
+_default_arifpay_base_url = "https://gateway.arifpay.org/api" if ARIFPAY_SANDBOX else "https://api.arifpay.org/api"
+ARIFPAY_BASE_URL = os.getenv("ARIFPAY_BASE_URL", _default_arifpay_base_url)
+ARIFPAY_DEFAULT_CURRENCY = os.getenv("ARIFPAY_DEFAULT_CURRENCY", "ETB")
+ARIFPAY_RETURN_URL = os.getenv("ARIFPAY_RETURN_URL", None)
+ARIFPAY_SUCCESS_URL = os.getenv("ARIFPAY_SUCCESS_URL", None)
+ARIFPAY_ERROR_URL = os.getenv("ARIFPAY_ERROR_URL", None)
+ARIFPAY_CANCEL_URL = os.getenv("ARIFPAY_CANCEL_URL", None)
+ARIFPAY_NOTIFY_URL = os.getenv("ARIFPAY_NOTIFY_URL", None)
+ARIFPAY_REQUEST_TIMEOUT = int(os.getenv("ARIFPAY_REQUEST_TIMEOUT", "10"))
+
 RECONCILE_SWEEP_SECONDS = int(os.getenv("RECONCILE_SWEEP_SECONDS", "60"))
 RECONCILE_FIRST_CHECK_DELAY_SECONDS = int(os.getenv("RECONCILE_FIRST_CHECK_DELAY_SECONDS", "300"))
 _raw_backoff = os.getenv("RECONCILE_BACKOFF_SECONDS", "60,120,300,900,3600,3600,3600,3600")
@@ -130,21 +142,24 @@ if "test" in sys.argv:
     CELERY_RESULT_BACKEND = "cache+memory://"
     PAYMENT_THROTTLE_RATE = "10000/minute"
     ENABLE_FAKE_PROVIDER = True
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "test-cache",
+        }
+    }
 else:
     PAYMENT_THROTTLE_RATE = os.getenv("PAYMENT_THROTTLE_RATE", "100/minute")
-
-# --- Cache backend (used by rate-limiter) ---
-# Local-memory cache is per-process, so each gunicorn/runserver worker
-# keeps its own counter — that's the bug.  Redis is shared across all
-# processes, so the counter is accurate.
-
-
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/1",
+    # --- Cache backend (used by rate-limiter) ---
+    # Local-memory cache is per-process, so each gunicorn/runserver worker
+    # keeps its own counter — that's the bug. Redis is shared across all
+    # processes, so the counter is accurate.
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": "redis://127.0.0.1:6379/1",
+        }
     }
-}
 
 
 DATABASES = {
