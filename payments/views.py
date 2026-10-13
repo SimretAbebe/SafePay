@@ -14,6 +14,7 @@ from .models import InboundWebhookEvent, Payment
 from .permissions import HasAPIKey
 from .providers import (
     ChapaProvider,
+    ArifPayProvider,
     ProviderError,
     ProviderSignatureError,
     UnsupportedProviderStatus,
@@ -288,6 +289,7 @@ def cancel_payment(request, pk):
 @csrf_exempt
 @require_POST
 def chapa_webhook(request):
+    # Existing Chapa webhook – unchanged
     body = request.body
     body_sha256 = hashlib.sha256(body).hexdigest()
 
@@ -385,6 +387,82 @@ def chapa_webhook(request):
 
     InboundWebhookEvent.objects.create(
         provider="chapa",
+        signature_valid=True,
+        provider_reference=tx_ref,
+        event_type=event_type,
+        outcome=event_outcome,
+        body_sha256=body_sha256,
+    )
+    return JsonResponse({"status": "ok"}, status=200)
+
+
+@csrf_exempt
+@require_POST
+def arifpay_webhook(request):
+    """Handle ArifPay webhook callbacks.
+
+    Since ArifPay does not provide a signature verification mechanism, we consider the webhook
+    payload as trusted after basic parsing. The function mirrors the behaviour of the existing
+    ``chapa_webhook`` view, creating ``InboundWebhookEvent`` records and synchronising the payment
+    state via ``sync_payment_from_provider``.
+    """
+    body = request.body
+    body_sha256 = hashlib.sha256(body).hexdigest()
+
+    provider = ArifPayProvider()
+    try:
+        event = provider.parse_webhook(request.headers, body)
+    except ProviderError as exc:
+        # Record malformed payloads; no signature verification available.
+        InboundWebhookEvent.objects.create(
+            provider="arifpay",
+            signature_valid=False,
+            outcome="invalid_payload",
+            body_sha256=body_sha256,
+        )
+        return JsonResponse({"detail": "Invalid webhook payload."}, status=400)
+
+    tx_ref = event.provider_reference
+    event_type = None
+    if isinstance(event.raw, dict):
+        event_type = event.raw.get("event") or event.raw.get("type")
+        if not event_type and isinstance(event.raw.get("data"), dict):
+            event_type = event.raw["data"].get("event") or event.raw["data"].get("type")
+
+    payment = Payment.objects.filter(provider="arifpay", provider_reference=tx_ref).first()
+    if not payment:
+        InboundWebhookEvent.objects.create(
+            provider="arifpay",
+            signature_valid=True,
+            provider_reference=tx_ref,
+            event_type=event_type,
+            outcome="unknown_reference",
+            body_sha256=body_sha256,
+        )
+        return JsonResponse({"status": "ignored"}, status=200)
+
+    try:
+        sync_result = sync_payment_from_provider(payment.id)
+    except ProviderError:
+        InboundWebhookEvent.objects.create(
+            provider="arifpay",
+            signature_valid=True,
+            provider_reference=tx_ref,
+            event_type=event_type,
+            outcome="verify_failed",
+            body_sha256=body_sha256,
+        )
+        return JsonResponse({"detail": "Temporarily unable to confirm. Retry later."}, status=503)
+
+    if sync_result.outcome == "updated":
+        event_outcome = "processed_updated"
+    elif sync_result.outcome == "unchanged":
+        event_outcome = "processed_unchanged"
+    else:
+        event_outcome = "mismatch"
+
+    InboundWebhookEvent.objects.create(
+        provider="arifpay",
         signature_valid=True,
         provider_reference=tx_ref,
         event_type=event_type,
