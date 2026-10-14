@@ -10,7 +10,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from payments.models import InboundWebhookEvent, Payment, PaymentStatusHistory, WebhookDelivery
-from payments.providers import ChapaProvider, ProviderError, ProviderStatusResult
+from payments.providers import ArifPayProvider, ChapaProvider, ProviderError, ProviderStatusResult
 from payments.test_utils import create_test_merchant
 
 
@@ -533,3 +533,309 @@ class InboundWebhookTests(TransactionTestCase):
     def test_get_request_returns_405(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 405)
+
+
+# ---------------------------------------------------------------------------
+# ArifPay Inbound Webhook Tests (Parity with Chapa)
+# ---------------------------------------------------------------------------
+
+@override_settings(
+    ARIFPAY_API_KEY="test-arifpay-merchant-key",
+    ARIFPAY_SANDBOX=True,
+)
+class ArifPayInboundWebhookTests(TransactionTestCase):
+    def setUp(self):
+        cache.clear()
+        self.mock_webhook_patcher = patch("payments.tasks.deliver_webhook_attempt.delay")
+        self.mock_webhook_delay = self.mock_webhook_patcher.start()
+        self.client = APIClient()
+        self.merchant, self.api_key = create_test_merchant("ArifPay Webhook Merchant")
+        self.url = reverse("arifpay_webhook")
+
+    def tearDown(self):
+        self.mock_webhook_patcher.stop()
+        cache.clear()
+
+    def _create_payment(self, tx_ref: str, status: str = "pending") -> Payment:
+        return Payment.objects.create(
+            merchant=self.merchant,
+            idempotency_key=f"idem-{tx_ref}",
+            amount=Decimal("100.00"),
+            sender="customer@example.com",
+            receiver="SafePay",
+            provider="arifpay",
+            provider_reference=tx_ref,
+            status=status,
+        )
+
+    # 1. Valid webhook, out-of-band verify says success: 200, payment becomes succeeded,
+    #    two history rows, exactly one WebhookDelivery, outcome processed_updated.
+    @patch.object(ArifPayProvider, "verify")
+    def test_valid_webhook_verify_success(self, mock_verify):
+        tx_ref = "sp-arif-valid-1"
+        payment = self._create_payment(tx_ref=tx_ref, status="pending")
+
+        mock_verify.return_value = ProviderStatusResult(
+            provider_reference=tx_ref,
+            status="succeeded",
+            raw={"transaction": {"transactionStatus": "SUCCESS"}, "sessionId": tx_ref},
+        )
+
+        payload = {"sessionId": tx_ref, "transaction": {"transactionStatus": "SUCCESS"}}
+        body_bytes = json.dumps(payload).encode("utf-8")
+
+        response = self.client.post(self.url, data=body_bytes, content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, "succeeded")
+
+        histories = list(PaymentStatusHistory.objects.filter(payment=payment).order_by("changed_at"))
+        self.assertEqual(len(histories), 2)
+        self.assertEqual(histories[0].from_status, "pending")
+        self.assertEqual(histories[0].to_status, "processing")
+        self.assertEqual(histories[1].from_status, "processing")
+        self.assertEqual(histories[1].to_status, "succeeded")
+
+        deliveries = WebhookDelivery.objects.filter(payment=payment)
+        self.assertEqual(deliveries.count(), 1)
+
+        events = InboundWebhookEvent.objects.all()
+        self.assertEqual(events.count(), 1)
+        event = events.first()
+        self.assertTrue(event.signature_valid)
+        self.assertEqual(event.outcome, "processed_updated")
+        self.assertEqual(event.provider, "arifpay")
+        self.assertEqual(event.provider_reference, tx_ref)
+
+    # 2. Webhook payload says success while out-of-band verify says pending:
+    #    200, payment stays pending, no history, no WebhookDelivery, outcome processed_unchanged.
+    @patch.object(ArifPayProvider, "verify")
+    def test_webhook_success_while_verify_pending(self, mock_verify):
+        tx_ref = "sp-arif-pending-verify-1"
+        payment = self._create_payment(tx_ref=tx_ref, status="pending")
+
+        mock_verify.return_value = ProviderStatusResult(
+            provider_reference=tx_ref,
+            status="pending",
+            raw={"transaction": {"transactionStatus": "PENDING"}, "sessionId": tx_ref},
+        )
+
+        payload = {"sessionId": tx_ref, "transaction": {"transactionStatus": "SUCCESS"}}
+        body_bytes = json.dumps(payload).encode("utf-8")
+
+        response = self.client.post(self.url, data=body_bytes, content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, "pending")
+        self.assertEqual(PaymentStatusHistory.objects.filter(payment=payment).count(), 0)
+        self.assertEqual(WebhookDelivery.objects.filter(payment=payment).count(), 0)
+
+        events = InboundWebhookEvent.objects.all()
+        self.assertEqual(events.count(), 1)
+        event = events.first()
+        self.assertTrue(event.signature_valid)
+        self.assertEqual(event.outcome, "processed_unchanged")
+
+    # 3. Webhook body says success but out-of-band verify says failed:
+    #    payment follows verify and ends failed.
+    @patch.object(ArifPayProvider, "verify")
+    def test_webhook_success_but_verify_failed(self, mock_verify):
+        tx_ref = "sp-arif-failed-verify-1"
+        payment = self._create_payment(tx_ref=tx_ref, status="pending")
+
+        mock_verify.return_value = ProviderStatusResult(
+            provider_reference=tx_ref,
+            status="failed",
+            raw={"transaction": {"transactionStatus": "FAILED"}, "sessionId": tx_ref},
+        )
+
+        payload = {"sessionId": tx_ref, "transaction": {"transactionStatus": "SUCCESS"}}
+        body_bytes = json.dumps(payload).encode("utf-8")
+
+        response = self.client.post(self.url, data=body_bytes, content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, "failed")
+
+        histories = list(PaymentStatusHistory.objects.filter(payment=payment).order_by("changed_at"))
+        self.assertEqual(len(histories), 2)
+        self.assertEqual(histories[0].to_status, "processing")
+        self.assertEqual(histories[1].to_status, "failed")
+
+        self.assertEqual(WebhookDelivery.objects.filter(payment=payment).count(), 1)
+
+        events = InboundWebhookEvent.objects.all()
+        self.assertEqual(events.count(), 1)
+        self.assertEqual(events.first().outcome, "processed_updated")
+
+    # 4. Valid webhook sent twice: idempotent, second outcome processed_unchanged.
+    @patch.object(ArifPayProvider, "verify")
+    def test_valid_webhook_sent_twice_idempotent(self, mock_verify):
+        tx_ref = "sp-arif-twice-1"
+        payment = self._create_payment(tx_ref=tx_ref, status="pending")
+
+        mock_verify.return_value = ProviderStatusResult(
+            provider_reference=tx_ref,
+            status="succeeded",
+            raw={"transaction": {"transactionStatus": "SUCCESS"}, "sessionId": tx_ref},
+        )
+
+        payload = {"sessionId": tx_ref, "transaction": {"transactionStatus": "SUCCESS"}}
+        body_bytes = json.dumps(payload).encode("utf-8")
+
+        response1 = self.client.post(self.url, data=body_bytes, content_type="application/json")
+        self.assertEqual(response1.status_code, 200)
+
+        response2 = self.client.post(self.url, data=body_bytes, content_type="application/json")
+        self.assertEqual(response2.status_code, 200)
+
+        events = list(InboundWebhookEvent.objects.filter(provider="arifpay").order_by("received_at"))
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].outcome, "processed_updated")
+        self.assertEqual(events[1].outcome, "processed_unchanged")
+
+        self.assertEqual(WebhookDelivery.objects.filter(payment=payment).count(), 1)
+        self.assertEqual(PaymentStatusHistory.objects.filter(payment=payment).count(), 2)
+
+    # 5. Unknown reference: 200, outcome unknown_reference, payment table untouched.
+    def test_unknown_reference_ignored(self):
+        payload = {"sessionId": "sp-arif-unknown-999", "transaction": {"transactionStatus": "SUCCESS"}}
+        body_bytes = json.dumps(payload).encode("utf-8")
+
+        response = self.client.post(self.url, data=body_bytes, content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ignored"})
+
+        events = InboundWebhookEvent.objects.all()
+        self.assertEqual(events.count(), 1)
+        event = events.first()
+        self.assertTrue(event.signature_valid)
+        self.assertEqual(event.outcome, "unknown_reference")
+        self.assertEqual(event.provider, "arifpay")
+        self.assertEqual(event.provider_reference, "sp-arif-unknown-999")
+
+    # 6. Verify raises ProviderError (5xx/timeout): 503, outcome verify_failed.
+    @patch.object(ArifPayProvider, "verify")
+    def test_verify_provider_error_returns_503(self, mock_verify):
+        tx_ref = "sp-arif-down-1"
+        payment = self._create_payment(tx_ref=tx_ref, status="pending")
+
+        mock_verify.side_effect = ProviderError("ArifPay verify service unreachable")
+
+        payload = {"sessionId": tx_ref, "transaction": {"transactionStatus": "SUCCESS"}}
+        body_bytes = json.dumps(payload).encode("utf-8")
+
+        response = self.client.post(self.url, data=body_bytes, content_type="application/json")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"detail": "Temporarily unable to confirm. Retry later."})
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, "pending")
+        self.assertEqual(PaymentStatusHistory.objects.filter(payment=payment).count(), 0)
+
+        events = InboundWebhookEvent.objects.all()
+        self.assertEqual(events.count(), 1)
+        event = events.first()
+        self.assertTrue(event.signature_valid)
+        self.assertEqual(event.outcome, "verify_failed")
+        self.assertEqual(event.provider, "arifpay")
+
+    # 7. Unsupported status: 200, outcome ignored_unsupported.
+    def test_unsupported_status_ignored(self):
+        tx_ref = "sp-arif-unsupported-1"
+        self._create_payment(tx_ref=tx_ref, status="pending")
+
+        payload = {"sessionId": tx_ref, "transaction": {"transactionStatus": "UNKNOWN_CUSTOM_STATUS"}}
+        body_bytes = json.dumps(payload).encode("utf-8")
+
+        response = self.client.post(self.url, data=body_bytes, content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ignored"})
+
+        events = InboundWebhookEvent.objects.all()
+        self.assertEqual(events.count(), 1)
+        event = events.first()
+        self.assertTrue(event.signature_valid)
+        self.assertEqual(event.outcome, "ignored_unsupported")
+        self.assertEqual(event.provider, "arifpay")
+        self.assertEqual(event.provider_reference, tx_ref)
+
+    # 8. Malformed JSON: 400, outcome invalid_payload.
+    def test_malformed_json_returns_400(self):
+        response = self.client.post(self.url, data=b"bad-json-payload", content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"detail": "Invalid webhook payload."})
+
+        events = InboundWebhookEvent.objects.all()
+        self.assertEqual(events.count(), 1)
+        event = events.first()
+        self.assertFalse(event.signature_valid)
+        self.assertEqual(event.outcome, "invalid_payload")
+        self.assertEqual(event.provider, "arifpay")
+
+    # 9. Missing sessionId: 400, outcome invalid_payload.
+    def test_missing_session_id_returns_400(self):
+        payload = {"transaction": {"transactionStatus": "SUCCESS"}}
+        body_bytes = json.dumps(payload).encode("utf-8")
+
+        response = self.client.post(self.url, data=body_bytes, content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"detail": "Invalid webhook payload."})
+
+        events = InboundWebhookEvent.objects.all()
+        self.assertEqual(events.count(), 1)
+        event = events.first()
+        self.assertFalse(event.signature_valid)
+        self.assertEqual(event.outcome, "invalid_payload")
+
+    # 10. InboundWebhookEvent stores only sha256 hash of the body.
+    @patch.object(ArifPayProvider, "verify")
+    def test_inbound_webhook_event_stores_only_sha256_hash(self, mock_verify):
+        tx_ref = "sp-arif-hash-1"
+        self._create_payment(tx_ref=tx_ref, status="pending")
+
+        mock_verify.return_value = ProviderStatusResult(
+            provider_reference=tx_ref,
+            status="succeeded",
+            raw={"transaction": {"transactionStatus": "SUCCESS"}, "sessionId": tx_ref},
+        )
+
+        secret_text = "confidential_arifpay_customer_info_456"
+        payload = {
+            "sessionId": tx_ref,
+            "transaction": {"transactionStatus": "SUCCESS"},
+            "extra": secret_text,
+        }
+        body_bytes = json.dumps(payload).encode("utf-8")
+
+        response = self.client.post(self.url, data=body_bytes, content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+        event = InboundWebhookEvent.objects.first()
+        self.assertIsNotNone(event)
+        expected_hash = hashlib.sha256(body_bytes).hexdigest()
+        self.assertEqual(event.body_sha256, expected_hash)
+
+        field_names = [f.name for f in InboundWebhookEvent._meta.fields]
+        self.assertNotIn("body", field_names)
+        self.assertNotIn("raw_body", field_names)
+
+        for field_name in field_names:
+            field_val = str(getattr(event, field_name))
+            self.assertNotIn(secret_text, field_val)
+        self.assertNotIn(secret_text, str(event))
+
+    # 11. GET request returns 405 Method Not Allowed.
+    def test_get_request_returns_405(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 405)
+

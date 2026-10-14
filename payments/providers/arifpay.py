@@ -46,7 +46,7 @@ class ArifPayProvider(PaymentProvider):
     """
 
     name: str = "arifpay"
-    supports_cancel: bool = True
+    supports_cancel: bool = False
 
     # The portal simulator key is ONLY valid for the sandbox PSS endpoint.
     # It must never be used for the hosted checkout endpoint in production.
@@ -60,12 +60,11 @@ class ArifPayProvider(PaymentProvider):
         """Read all ArifPay settings from Django settings (populated from .env)."""
         is_sandbox = bool(getattr(settings, "ARIFPAY_SANDBOX", True))
 
-        # Production base URL is provided by ArifPay on go-live.
-        # Sandbox uses gateway.arifpay.org.
+        # Modern ArifPay endpoints use the .net domain.
         default_base = (
-            "https://gateway.arifpay.org/api"
+            "https://gateway.arifpay.net/api"
             if is_sandbox
-            else "https://api.arifpay.org/api"
+            else "https://api.arifpay.net/api"
         )
         raw_base = getattr(settings, "ARIFPAY_BASE_URL", None) or default_base
         base_url = str(raw_base).rstrip("/")
@@ -367,20 +366,12 @@ class ArifPayProvider(PaymentProvider):
         )
 
     def cancel(self, provider_reference: str) -> ProviderStatusResult:
-        """Cancel a hosted checkout session."""
-        config = self._get_config()
-        api_key = self._require_merchant_key(config)
-        if not provider_reference:
-            raise ProviderError("Provider reference (sessionId) is required for cancellation")
+        """Cancel a hosted checkout session.
 
-        url = f"{config['base_url']}/checkout/session/{provider_reference}/cancel"
-        headers = {"x-arifpay-key": api_key, "Content-Type": "application/json"}
-        try:
-            requests.post(url, headers=headers, timeout=config["timeout"])
-        except requests.RequestException as exc:
-            raise ProviderError(f"ArifPay cancel request failed: {exc}")
-
-        return self.verify(provider_reference)
+        ArifPay does not expose a programmatic cancel endpoint. Sessions exit
+        via user cancellation on the hosted payment interface or session expiry.
+        """
+        raise ProviderError("ArifPay does not support programmatic session cancellation")
 
     # -------------------------------------------------------------------------
     # Webhook helpers

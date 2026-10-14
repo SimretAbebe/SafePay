@@ -16,13 +16,16 @@ class Command(BaseCommand):
         "                   Uses the portal simulator key (arif-sandbox-portal-key).\n"
         "                   Does NOT produce a checkout URL.\n"
         "  verify --ref  -- Verifies a hosted checkout session by sessionId.\n"
-        "                   Requires a real merchant API key."
+        "                   Requires a real merchant API key.\n"
+        "  providers     -- Lists all registered payment providers in SafePay.\n"
+        "  webhook       -- Simulates an incoming ArifPay webhook callback.\n"
+        "  audit         -- Displays recent tamper-proof inbound audit logs."
     )
 
     def add_arguments(self, parser):
         parser.add_argument(
             "action",
-            choices=["init", "verify"],
+            choices=["init", "verify", "providers", "webhook", "audit"],
             help="Action to run.",
         )
         parser.add_argument(
@@ -81,6 +84,70 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        action = options["action"]
+        use_pss = options["pss"]
+
+        # ------------------------------------------------------------------ #
+        # providers: list registered providers and capabilities
+        # ------------------------------------------------------------------ #
+        if action == "providers":
+            from payments.providers.registry import PROVIDER_REGISTRY
+            self.stdout.write(self.style.SUCCESS("\n[REGISTERED PAYMENT PROVIDERS]"))
+            self.stdout.write(f"  {'Provider':<12} {'Supports Cancel':<18} {'Status'}")
+            self.stdout.write("  " + "-" * 42)
+            for name, p in sorted(PROVIDER_REGISTRY.items()):
+                self.stdout.write(f"  {name:<12} {str(p.supports_cancel):<18} ACTIVE")
+            self.stdout.write("")
+            return
+
+        # ------------------------------------------------------------------ #
+        # audit: display recent inbound webhook audit events
+        # ------------------------------------------------------------------ #
+        if action == "audit":
+            from payments.models import InboundWebhookEvent
+            self.stdout.write(self.style.SUCCESS("\n[RECENT INBOUND WEBHOOK AUDIT LOG]"))
+            self.stdout.write(f"  {'ID':<5} {'Provider':<10} {'Outcome':<22} {'Sig Valid':<10} {'SHA-256 Hash'}")
+            self.stdout.write("  " + "-" * 68)
+            events = list(InboundWebhookEvent.objects.filter(provider="arifpay").order_by("-received_at")[:5])
+            if not events:
+                self.stdout.write("  (No ArifPay audit events recorded yet)")
+            else:
+                for e in events:
+                    self.stdout.write(f"  {e.id:<5} {e.provider:<10} {e.outcome:<22} {str(e.signature_valid):<10} {e.body_sha256[:16]}...")
+            self.stdout.write("")
+            return
+
+        # ------------------------------------------------------------------ #
+        # webhook: simulate an inbound webhook callback
+        # ------------------------------------------------------------------ #
+        if action == "webhook":
+            import json
+            from django.test import Client
+            from payments.models import InboundWebhookEvent
+
+            c = Client()
+            test_sess = options.get("ref") or "demo-arif-session-100"
+            payload = {"sessionId": test_sess, "transaction": {"transactionStatus": "SUCCESS"}}
+            res = c.post(
+                "/api/webhooks/arifpay/",
+                json.dumps(payload),
+                content_type="application/json",
+            )
+            self.stdout.write(self.style.SUCCESS("\n[INBOUND WEBHOOK SIMULATION]"))
+            self.stdout.write(f"  Endpoint : POST /api/webhooks/arifpay/")
+            self.stdout.write(f"  Session  : {test_sess}")
+            self.stdout.write(f"  HTTP Code: {res.status_code}")
+            self.stdout.write(f"  Response : {res.json()}")
+
+            event = InboundWebhookEvent.objects.filter(provider="arifpay").order_by("-received_at").first()
+            if event:
+                self.stdout.write(self.style.SUCCESS("\n[INBOUND AUDIT EVENT RECORDED]"))
+                self.stdout.write(f"  Event ID  : #{event.id}")
+                self.stdout.write(f"  Outcome   : {event.outcome}")
+                self.stdout.write(f"  Sig Valid : {event.signature_valid}")
+                self.stdout.write(f"  SHA-256   : {event.body_sha256[:24]}... (zero sensitive PII stored)\n")
+            return
+
         api_key = getattr(settings, "ARIFPAY_API_KEY", "") or ""
         if not api_key.strip():
             self.stderr.write(
@@ -89,9 +156,6 @@ class Command(BaseCommand):
                 )
             )
             return
-
-        action = options["action"]
-        use_pss = options["pss"]
 
         # ------------------------------------------------------------------ #
         # init: hosted checkout OR sandbox PSS transfer

@@ -76,14 +76,22 @@ class ArifPayProviderConfigTests(SimpleTestCase):
     @override_settings(ARIFPAY_SANDBOX=True, ARIFPAY_BASE_URL="")
     def test_sandbox_default_base_url(self):
         config = self.provider._get_config()
-        self.assertEqual(config["base_url"], "https://gateway.arifpay.org/api")
+        self.assertEqual(config["base_url"], "https://gateway.arifpay.net/api")
         self.assertTrue(config["sandbox"])
 
     @override_settings(ARIFPAY_SANDBOX=False, ARIFPAY_BASE_URL="")
     def test_production_default_base_url(self):
         config = self.provider._get_config()
-        self.assertEqual(config["base_url"], "https://api.arifpay.org/api")
+        self.assertEqual(config["base_url"], "https://api.arifpay.net/api")
         self.assertFalse(config["sandbox"])
+
+    def test_supports_cancel_is_false(self):
+        self.assertFalse(self.provider.supports_cancel)
+
+    def test_cancel_raises_provider_error(self):
+        with self.assertRaises(ProviderError) as ctx:
+            self.provider.cancel("sess-123")
+        self.assertIn("does not support programmatic session cancellation", str(ctx.exception))
 
     @override_settings(ARIFPAY_BASE_URL="https://custom-gateway.arifpay.org")
     def test_custom_base_url_normalized_with_api(self):
@@ -432,6 +440,29 @@ class ArifPayWebhookViewTests(TestCase):
     def test_webhook_malformed_json_returns_400(self):
         res = self.client.post(self.url, data="bad-json", content_type="application/json")
         self.assertEqual(res.status_code, 400)
+
+    def test_webhook_unsupported_status_ignored(self):
+        payment = Payment.objects.create(
+            merchant=self.merchant,
+            idempotency_key="idem-arifpay-webhook-unsupported",
+            amount=Decimal("100.00"),
+            sender="customer@example.com",
+            receiver="SafePay",
+            provider="arifpay",
+            provider_reference="sess-webhook-unsupported",
+            status="pending",
+        )
+        body = json.dumps({
+            "sessionId": "sess-webhook-unsupported",
+            "transaction": {"transactionStatus": "UNKNOWN_CUSTOM_STATUS"},
+        })
+        res = self.client.post(self.url, data=body, content_type="application/json")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json(), {"status": "ignored"})
+        event = InboundWebhookEvent.objects.filter(provider_reference="sess-webhook-unsupported").first()
+        self.assertIsNotNone(event)
+        self.assertEqual(event.outcome, "ignored_unsupported")
+        self.assertTrue(event.signature_valid)
 
 
 # ---------------------------------------------------------------------------

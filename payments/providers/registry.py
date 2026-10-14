@@ -64,3 +64,6 @@ _registry["chapa"] = ChapaProvider()
 _registry["arifpay"] = ArifPayProvider()
 if is_fake_provider_enabled():
     _registry["fake"] = FakeProvider()
+
+PROVIDER_REGISTRY = _registry
+
