@@ -11,7 +11,7 @@ from .base import (
 from .arifpay import ArifPayProvider
 from .chapa import ChapaProvider
 from .fake import FakeProvider
-from .registry import get_provider, register_provider
+from .registry import PROVIDER_REGISTRY, get_provider, register_provider
 
 __all__ = [
     "PaymentProvider",
@@ -27,4 +27,5 @@ __all__ = [
     "FakeProvider",
     "register_provider",
     "get_provider",
+    "PROVIDER_REGISTRY",
 ]
