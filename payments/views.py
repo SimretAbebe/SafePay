@@ -412,6 +412,16 @@ def arifpay_webhook(request):
     provider = ArifPayProvider()
     try:
         event = provider.parse_webhook(request.headers, body)
+    except UnsupportedProviderStatus as exc:
+        InboundWebhookEvent.objects.create(
+            provider="arifpay",
+            signature_valid=True,
+            provider_reference=getattr(exc, "provider_reference", None),
+            event_type=getattr(exc, "event_type", None),
+            outcome="ignored_unsupported",
+            body_sha256=body_sha256,
+        )
+        return JsonResponse({"status": "ignored"}, status=200)
     except ProviderError as exc:
         # Record malformed payloads; no signature verification available.
         InboundWebhookEvent.objects.create(
