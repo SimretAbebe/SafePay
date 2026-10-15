@@ -20,6 +20,7 @@ from .providers import (
     UnsupportedProviderStatus,
     get_provider,
 )
+from .routing import build_provider_chain, start_checkout
 from .serializers import CheckoutSessionSerializer, PaymentSerializer
 from .services import notify_status_change, schedule_first_check, sync_payment_from_provider
 from .tasks import log_payment_event
@@ -85,22 +86,25 @@ def create_checkout_session(request):
     serializer.is_valid(raise_exception=True)
     validated_data = serializer.validated_data
 
-    provider_name = validated_data.get("provider") or getattr(settings, "DEFAULT_PROVIDER", "chapa")
-    try:
-        provider = get_provider(provider_name)
-    except ProviderError:
-        return Response(
-            {"detail": f"Unknown or unavailable provider: '{provider_name}'"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    # Validate the explicitly requested provider now (before touching the DB).
+    requested_provider_name = validated_data.get("provider") or None
+    if requested_provider_name:
+        try:
+            get_provider(requested_provider_name)
+        except ProviderError:
+            return Response(
+                {"detail": f"Unknown or unavailable provider: '{requested_provider_name}'"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    # Check if payment already exists for this merchant and idempotency key
+    allow_fallback = validated_data.get("allow_fallback", True)
+
+    # --- Idempotency: return 200 if session already exists ---
     existing_payment = Payment.objects.filter(
         merchant=request.merchant,
         idempotency_key=idempotency_key,
     ).first()
 
-    # If it already has a checkout_url, return 200 with the stored session
     if existing_payment and existing_payment.checkout_url:
         return Response(
             {
@@ -121,6 +125,27 @@ def create_checkout_session(request):
     reference = validated_data.get("reference")
     return_url = validated_data.get("return_url")
 
+    # Build provider candidate chain (considering merchant defaults and prior attempts)
+    if not existing_payment:
+        class _NewPayment:
+            provider_attempts = type('qs', (), {'filter': staticmethod(lambda **_: type('qs2', (), {'first': staticmethod(lambda: None)})())})()  # noqa: E501
+
+        chain = build_provider_chain(
+            request.merchant,
+            requested_provider_name,
+            allow_fallback,
+            _NewPayment(),
+        )
+    else:
+        chain = build_provider_chain(
+            request.merchant,
+            requested_provider_name,
+            allow_fallback,
+            existing_payment,
+        )
+
+    primary_provider_name = chain[0]
+
     if not existing_payment:
         try:
             with transaction.atomic():
@@ -132,13 +157,32 @@ def create_checkout_session(request):
                     receiver=receiver,
                     merchant_reference=reference,
                     return_url=return_url,
-                    provider=provider.name,
+                    provider=primary_provider_name,
                     status="pending",
                 )
         except IntegrityError:
             payment = Payment.objects.get(
                 merchant=request.merchant,
                 idempotency_key=idempotency_key,
+            )
+            if payment.checkout_url:
+                return Response(
+                    {
+                        "id": payment.id,
+                        "status": payment.status,
+                        "provider": payment.provider,
+                        "reference": payment.merchant_reference,
+                        "checkout_url": payment.checkout_url,
+                        "created_at": payment.created_at,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            # Re-build chain for the existing payment's prior attempts.
+            chain = build_provider_chain(
+                request.merchant,
+                requested_provider_name,
+                allow_fallback,
+                payment,
             )
     else:
         payment = existing_payment
@@ -151,36 +195,42 @@ def create_checkout_session(request):
     if validated_data.get("customer_last_name"):
         customer["last_name"] = validated_data["customer_last_name"]
 
-    try:
-        with transaction.atomic():
-            locked_payment = Payment.objects.select_for_update().get(pk=payment.pk)
-            if locked_payment.checkout_url:
-                return Response(
-                    {
-                        "id": locked_payment.id,
-                        "status": locked_payment.status,
-                        "provider": locked_payment.provider,
-                        "reference": locked_payment.merchant_reference,
-                        "checkout_url": locked_payment.checkout_url,
-                        "created_at": locked_payment.created_at,
-                    },
-                    status=status.HTTP_200_OK,
-                )
-
-            init_result = provider.initialize(locked_payment, customer=customer or None)
-            locked_payment.provider = provider.name
-            locked_payment.provider_reference = init_result.provider_reference
-            locked_payment.checkout_url = init_result.checkout_url
-            locked_payment.save(
-                update_fields=["provider", "provider_reference", "checkout_url", "updated_at"]
+    with transaction.atomic():
+        locked_payment = Payment.objects.select_for_update().get(pk=payment.pk)
+        if locked_payment.checkout_url:
+            return Response(
+                {
+                    "id": locked_payment.id,
+                    "status": locked_payment.status,
+                    "provider": locked_payment.provider,
+                    "reference": locked_payment.merchant_reference,
+                    "checkout_url": locked_payment.checkout_url,
+                    "created_at": locked_payment.created_at,
+                },
+                status=status.HTTP_200_OK,
             )
-            schedule_first_check(locked_payment)
-    except ProviderError as exc:
-        logger.warning("Checkout session provider failure: %s", exc)
-        return Response(
-            {"detail": "Payment provider unavailable. Retry with the same Idempotency-Key."},
-            status=status.HTTP_502_BAD_GATEWAY,
+
+        # start_checkout never raises; attempt rows are committed with the transaction.
+        routing_result = start_checkout(
+            locked_payment,
+            customer=customer or None,
+            chain=chain,
         )
+
+        if not routing_result.success:
+            # Attempts persist because transaction commits normally without unhandled exceptions
+            return Response(
+                {"detail": "Payment provider unavailable. Retry with the same Idempotency-Key."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        locked_payment.provider = routing_result.provider_name
+        locked_payment.provider_reference = routing_result.provider_reference
+        locked_payment.checkout_url = routing_result.checkout_url
+        locked_payment.save(
+            update_fields=["provider", "provider_reference", "checkout_url", "updated_at"]
+        )
+        schedule_first_check(locked_payment)
 
     return Response(
         {

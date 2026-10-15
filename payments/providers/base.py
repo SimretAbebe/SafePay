@@ -13,8 +13,11 @@ SAFEPAY_STATUSES = frozenset({
 
 
 class ProviderError(Exception):
-    """Base exception for payment provider failures."""
-    pass
+    """Base exception for provider failures (not_created=True indicates safe fallback)."""
+
+    def __init__(self, *args, not_created: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.not_created: bool = not_created
 
 
 class ProviderSignatureError(ProviderError):

@@ -24,6 +24,7 @@ class PaymentSerializer(serializers.ModelSerializer):
 
 
 class CheckoutSessionSerializer(serializers.Serializer):
+    """Validates checkout session request payload and routing overrides."""
     amount = serializers.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -70,6 +71,18 @@ class CheckoutSessionSerializer(serializers.Serializer):
         allow_blank=True,
         default=None,
     )
+    # Provider fallback preference (strict boolean)
+    allow_fallback = serializers.BooleanField(
+        required=False,
+        default=True,
+    )
+
+    def validate_allow_fallback(self, value):
+        """Enforce strict boolean types (reject truthy/falsy strings like 'yes')."""
+        raw = self.initial_data.get("allow_fallback")
+        if raw is not None and not isinstance(raw, bool):
+            raise serializers.ValidationError("allow_fallback must be a boolean.")
+        return value
 
     def validate_amount(self, value):
         if value <= Decimal("0.00"):

@@ -11,6 +11,10 @@ class Merchant(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # Provider routing preferences
+    default_provider = models.CharField(max_length=30, null=True, blank=True)
+    fallback_providers = models.JSONField(default=list, blank=True)
+
     @staticmethod
     def hash_key(raw_key: str) -> str:
         return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
@@ -247,3 +251,34 @@ class InboundWebhookEvent(models.Model):
 
     def __str__(self):
         return f"{self.provider} ({self.outcome}) ref={self.provider_reference}"
+
+
+class ProviderAttempt(models.Model):
+    """Audit log of provider calls during checkout initialization."""
+
+    OUTCOME_CREATED = "created"
+    OUTCOME_FAILED_NOT_CREATED = "failed_not_created"
+    OUTCOME_FAILED_UNKNOWN = "failed_unknown"
+
+    OUTCOME_CHOICES = [
+        (OUTCOME_CREATED, "Created"),
+        (OUTCOME_FAILED_NOT_CREATED, "Failed — Not Created"),
+        (OUTCOME_FAILED_UNKNOWN, "Failed — Unknown"),
+    ]
+
+    payment = models.ForeignKey(
+        Payment,
+        on_delete=models.CASCADE,
+        related_name="provider_attempts",
+    )
+    provider = models.CharField(max_length=30)
+    outcome = models.CharField(max_length=30, choices=OUTCOME_CHOICES)
+    # Exception class name only — never store messages or secrets.
+    error_type = models.CharField(max_length=60, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"[{self.payment_id}] {self.provider} → {self.outcome}"

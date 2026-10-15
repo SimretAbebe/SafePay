@@ -5,6 +5,7 @@ import datetime
 from typing import Any, Dict, Optional
 
 import requests
+import requests.exceptions
 from django.conf import settings
 
 from .base import (
@@ -22,28 +23,6 @@ logger = logging.getLogger(__name__)
 
 
 class ArifPayProvider(PaymentProvider):
-    """ArifPay concrete implementation.
-
-    Two distinct payment flows exist in ArifPay:
-
-    1. **Hosted Checkout (production flow)**
-       - POST ``/api/checkout/session`` with a *merchant* API key.
-       - Returns a ``paymentUrl`` the customer is redirected to.
-       - Requires a registered merchant account and a real merchant API key
-         from developer.arifpay.net — the portal simulator key does NOT work here.
-
-    2. **Sandbox Direct PSS Transfer (sandbox-only testing)**
-       - POST ``https://developer.arifpay.org/api/sandbox/c2b/pss/direct/transfer``
-       - Uses the portal simulator key (``arif-sandbox-portal-key``).
-       - Simulates a card payment immediately; does NOT produce a hosted checkout URL.
-       - Controlled via optional simulation headers ``x-arifpay-sim-mode`` and
-         ``x-arifpay-fee-source``.
-
-    SafePay's provider interface is built around **hosted checkout** so that merchants
-    can redirect customers to a payment page.  Direct PSS is supported exclusively in
-    the ``arifpay_smoke`` management command as a sandbox smoke-test path.  It is
-    never used in the live payment flow.
-    """
 
     name: str = "arifpay"
     supports_cancel: bool = False
@@ -90,14 +69,16 @@ class ArifPayProvider(PaymentProvider):
         """Return the merchant API key, refusing portal simulator keys."""
         api_key = str(config.get("api_key", "")).strip().strip("'\"")
         if not api_key:
-            raise ProviderError("ArifPay API key is not configured")
+            # No key configured: request was never attempted.
+            raise ProviderError("ArifPay API key is not configured", not_created=True)
         if api_key == self.SANDBOX_PORTAL_KEY:
             raise ProviderError(
                 "ARIFPAY_API_KEY is set to the sandbox portal simulator key "
                 f"('{self.SANDBOX_PORTAL_KEY}'). That key only works with the "
                 "sandbox PSS direct-transfer endpoint — it cannot create hosted "
                 "checkout sessions. To use hosted checkout (production flow), set "
-                "ARIFPAY_API_KEY to a merchant API key from developer.arifpay.net."
+                "ARIFPAY_API_KEY to a merchant API key from developer.arifpay.net.",
+                not_created=True,
             )
         return api_key
 
@@ -179,22 +160,45 @@ class ArifPayProvider(PaymentProvider):
                 headers=headers,
                 timeout=config["timeout"],
             )
-        except requests.RequestException as exc:
+        except requests.exceptions.ConnectTimeout as exc:
+            # Connect timeout: definitely not created
             raise ProviderError(
-                self._sanitize_error(f"ArifPay initialize request failed: {exc}", api_key)
+                self._sanitize_error(f"ArifPay initialize connect timeout: {exc}", api_key),
+                not_created=True,
+            )
+        except requests.exceptions.ConnectionError as exc:
+            # Connection failed: definitely not created
+            raise ProviderError(
+                self._sanitize_error(f"ArifPay initialize connection error: {exc}", api_key),
+                not_created=True,
+            )
+        except requests.exceptions.ReadTimeout as exc:
+            # Read timeout: uncertain
+            raise ProviderError(
+                self._sanitize_error(f"ArifPay initialize read timeout: {exc}", api_key),
+                not_created=False,
+            )
+        except requests.RequestException as exc:
+            # Network failure: uncertain
+            raise ProviderError(
+                self._sanitize_error(f"ArifPay initialize request failed: {exc}", api_key),
+                not_created=False,
             )
 
         try:
             data_json = response.json()
         except Exception:
+            # Malformed response: uncertain
             raise ProviderError(
                 self._sanitize_error(
                     f"ArifPay initialize returned non-JSON (status {response.status_code})",
                     api_key,
-                )
+                ),
+                not_created=False,
             )
 
-        if response.status_code != 200 or data_json.get("error"):
+        if response.status_code >= 400 and response.status_code < 500:
+            # HTTP 4xx: rejected by provider before session creation
             raw_msg = data_json.get("msg") if isinstance(data_json, dict) else None
             if raw_msg and "Test API Key" in str(raw_msg):
                 detail = (
@@ -205,15 +209,36 @@ class ArifPayProvider(PaymentProvider):
             else:
                 detail = raw_msg or f"HTTP {response.status_code}"
             raise ProviderError(
-                self._sanitize_error(f"ArifPay initialize failed: {detail}", api_key)
+                self._sanitize_error(f"ArifPay initialize failed: {detail}", api_key),
+                not_created=True,
+            )
+
+        if response.status_code >= 500:
+            # HTTP 5xx: server error, session may exist — uncertain
+            raw_msg = data_json.get("msg") if isinstance(data_json, dict) else None
+            detail = raw_msg or f"HTTP {response.status_code}"
+            raise ProviderError(
+                self._sanitize_error(f"ArifPay initialize failed: {detail}", api_key),
+                not_created=False,
+            )
+
+        if data_json.get("error"):
+            # Application-level error on a 2xx: uncertain (treat as non-creation).
+            raw_msg = data_json.get("msg") if isinstance(data_json, dict) else None
+            detail = raw_msg or "application error"
+            raise ProviderError(
+                self._sanitize_error(f"ArifPay initialize failed: {detail}", api_key),
+                not_created=False,
             )
 
         data = data_json.get("data", {})
         session_id = data.get("sessionId")
         checkout_url = data.get("paymentUrl")
         if not session_id or not checkout_url:
+            # Missing required fields in a 2xx reply: uncertain.
             raise ProviderError(
-                "ArifPay initialize response missing sessionId or paymentUrl"
+                "ArifPay initialize response missing sessionId or paymentUrl",
+                not_created=False,
             )
 
         return InitResult(provider_reference=session_id, checkout_url=checkout_url)

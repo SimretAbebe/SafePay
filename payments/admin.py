@@ -1,3 +1,4 @@
+from django import forms
 from django.contrib import admin, messages
 from django.utils import timezone
 
@@ -7,14 +8,73 @@ from .models import (
     Merchant,
     Payment,
     PaymentStatusHistory,
+    ProviderAttempt,
     WebhookDelivery,
 )
 from .tasks import deliver_webhook_attempt, reconcile_payment
 
 
+class MerchantAdminForm(forms.ModelForm):
+    """Validate default_provider and fallback_providers before saving."""
+
+    class Meta:
+        model = Merchant
+        fields = "__all__"
+
+    def clean(self):
+        from .providers.registry import _registry as _provider_registry
+
+        cleaned = super().clean()
+        default_provider = cleaned.get("default_provider") or ""
+        fallback_providers = cleaned.get("fallback_providers") or []
+
+        errors = {}
+
+        # Validate default_provider
+        if default_provider and default_provider not in _provider_registry:
+            errors["default_provider"] = (
+                f"'{default_provider}' is not a registered provider. "
+                f"Available: {sorted(_provider_registry.keys())}"
+            )
+
+        # Validate fallback_providers
+        if not isinstance(fallback_providers, list):
+            errors["fallback_providers"] = "Must be a JSON list of provider name strings."
+        else:
+            seen = set()
+            for name in fallback_providers:
+                if not isinstance(name, str):
+                    errors.setdefault("fallback_providers", [])
+                    errors["fallback_providers"] = "Each entry must be a string."
+                    break
+                if name not in _provider_registry:
+                    errors["fallback_providers"] = (
+                        f"'{name}' is not a registered provider. "
+                        f"Available: {sorted(_provider_registry.keys())}"
+                    )
+                    break
+                if name in seen:
+                    errors["fallback_providers"] = f"Duplicate provider name: '{name}'."
+                    break
+                seen.add(name)
+
+            # The default must not also appear in the fallback list.
+            if default_provider and default_provider in seen:
+                errors["fallback_providers"] = (
+                    f"'{default_provider}' is already set as the default provider — "
+                    "it must not appear in the fallback list."
+                )
+
+        if errors:
+            raise forms.ValidationError(errors)
+
+        return cleaned
+
+
 @admin.register(Merchant)
 class MerchantAdmin(admin.ModelAdmin):
-    list_display = ("name", "key_prefix", "is_active", "created_at")
+    form = MerchantAdminForm
+    list_display = ("name", "key_prefix", "is_active", "default_provider", "created_at")
     readonly_fields = ("api_key_hash", "key_prefix", "created_at")
 
     def save_model(self, request, obj, form, change):
@@ -37,6 +97,18 @@ class PaymentStatusHistoryInline(admin.TabularInline):
     readonly_fields = ("from_status", "to_status", "changed_at")
     extra = 0  # history is auto-generated, never added by hand
     can_delete = False  # an audit trail must not be deleted from the admin
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class ProviderAttemptInline(admin.TabularInline):
+    """Read-only inline showing all provider call attempts for a payment."""
+    model = ProviderAttempt
+    readonly_fields = ("provider", "outcome", "error_type", "created_at")
+    extra = 0
+    can_delete = False
+    ordering = ("created_at", "id")
 
     def has_add_permission(self, request, obj=None):
         return False
@@ -81,7 +153,7 @@ class PaymentAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
     )
-    inlines = [PaymentStatusHistoryInline]
+    inlines = [PaymentStatusHistoryInline, ProviderAttemptInline]
     actions = [
         "mark_processing",
         "mark_succeeded",
