@@ -5,6 +5,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 import requests
+import requests.exceptions
 from django.conf import settings
 
 from .base import (
@@ -50,7 +51,8 @@ class ChapaProvider(PaymentProvider):
     def _require_secret_key(self, config: Dict[str, Any]) -> str:
         secret = str(config.get("secret_key", "")).strip().strip("'\"")
         if not secret:
-            raise ProviderError("Chapa is not configured")
+            # Missing key means the request was never attempted.
+            raise ProviderError("Chapa is not configured", not_created=True)
         return secret
 
     def _sanitize_error(self, message: str, secret_key: Optional[str] = None) -> str:
@@ -100,32 +102,84 @@ class ChapaProvider(PaymentProvider):
                 headers=headers,
                 timeout=config["timeout"],
             )
-        except requests.Timeout as e:
-            raise ProviderError(self._sanitize_error(f"Chapa initialize request timed out: {type(e).__name__}", secret_key))
+        except requests.exceptions.ConnectTimeout as e:
+            # Connect timeout: definitely not created
+            raise ProviderError(
+                self._sanitize_error(f"Chapa initialize connect timeout: {type(e).__name__}", secret_key),
+                not_created=True,
+            )
+        except requests.exceptions.ConnectionError as e:
+            # Connection failed: definitely not created
+            raise ProviderError(
+                self._sanitize_error(f"Chapa initialize connection error: {type(e).__name__}", secret_key),
+                not_created=True,
+            )
+        except (requests.exceptions.Timeout, requests.exceptions.ReadTimeout) as e:
+            # Read/request timeout: uncertain
+            raise ProviderError(
+                self._sanitize_error(f"Chapa initialize request timed out: {type(e).__name__}", secret_key),
+                not_created=False,
+            )
         except requests.RequestException as e:
-            raise ProviderError(self._sanitize_error(f"Chapa initialize network error: {type(e).__name__}", secret_key))
+            # Network failure: uncertain
+            raise ProviderError(
+                self._sanitize_error(f"Chapa initialize network error: {type(e).__name__}", secret_key),
+                not_created=False,
+            )
 
         try:
             data_json = response.json()
         except Exception:
-            raise ProviderError(self._sanitize_error(f"Chapa initialize returned invalid JSON (HTTP {response.status_code})", secret_key))
+            # Malformed response: uncertain
+            raise ProviderError(
+                self._sanitize_error(
+                    f"Chapa initialize returned invalid JSON (HTTP {response.status_code})",
+                    secret_key,
+                ),
+                not_created=False,
+            )
 
-        if response.status_code != 200:
+        if response.status_code >= 400 and response.status_code < 500:
+            # HTTP 4xx: rejected by provider before session creation
             err_msg = data_json.get("message") if isinstance(data_json, dict) else None
             detail = err_msg or f"HTTP {response.status_code}"
-            raise ProviderError(self._sanitize_error(f"Chapa initialize failed: {detail}", secret_key))
+            raise ProviderError(
+                self._sanitize_error(f"Chapa initialize failed: {detail}", secret_key),
+                not_created=True,
+            )
+
+        if response.status_code >= 500:
+            # HTTP 5xx: server error, session may exist — uncertain
+            err_msg = data_json.get("message") if isinstance(data_json, dict) else None
+            detail = err_msg or f"HTTP {response.status_code}"
+            raise ProviderError(
+                self._sanitize_error(f"Chapa initialize failed: {detail}", secret_key),
+                not_created=False,
+            )
 
         if not isinstance(data_json, dict) or data_json.get("status") != "success":
+            # Missing or non-success status: uncertain
             msg = data_json.get("message", "Unknown error") if isinstance(data_json, dict) else "Invalid response"
-            raise ProviderError(self._sanitize_error(f"Chapa initialize unsuccessful: {msg}", secret_key))
+            raise ProviderError(
+                self._sanitize_error(f"Chapa initialize unsuccessful: {msg}", secret_key),
+                not_created=False,
+            )
 
         data = data_json.get("data")
         if not isinstance(data, dict):
-            raise ProviderError(self._sanitize_error("Chapa initialize response missing data object", secret_key))
+            # Missing data field in a 2xx reply: uncertain.
+            raise ProviderError(
+                self._sanitize_error("Chapa initialize response missing data object", secret_key),
+                not_created=False,
+            )
 
         checkout_url = data.get("checkout_url")
         if not checkout_url:
-            raise ProviderError(self._sanitize_error("Chapa initialize response missing checkout_url", secret_key))
+            # Missing checkout_url in a 2xx reply: uncertain.
+            raise ProviderError(
+                self._sanitize_error("Chapa initialize response missing checkout_url", secret_key),
+                not_created=False,
+            )
 
         return InitResult(provider_reference=tx_ref, checkout_url=checkout_url)
 

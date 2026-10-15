@@ -30,10 +30,28 @@ class FakeProvider(PaymentProvider):
 
     _store: ClassVar[Dict[str, Dict[str, Any]]] = {}
 
+    # Simulation error knobs for testing
+    _force_error: ClassVar[bool] = False
+    _force_error_not_created: ClassVar[bool] = False
+
     @classmethod
     def reset(cls) -> None:
-        """Clear the in-memory storage (useful between tests)."""
+        """Clear the in-memory storage and error knobs (useful between tests)."""
         cls._store.clear()
+        cls._force_error = False
+        cls._force_error_not_created = False
+
+    @classmethod
+    def set_error(cls, *, not_created: bool) -> None:
+        """Configure initialize() to raise ProviderError with the given not_created flag."""
+        cls._force_error = True
+        cls._force_error_not_created = not_created
+
+    @classmethod
+    def clear_error(cls) -> None:
+        """Remove any injected error; initialize() succeeds again."""
+        cls._force_error = False
+        cls._force_error_not_created = False
 
     @classmethod
     def simulate(cls, reference: str, provider_status: str) -> None:
@@ -44,6 +62,11 @@ class FakeProvider(PaymentProvider):
 
     def initialize(self, payment: Any, customer: Optional[dict] = None) -> InitResult:
         # The fake provider ignores any customer data; it is only for testing the interface.
+        if self._force_error:
+            raise ProviderError(
+                "FakeProvider forced error (test knob)",
+                not_created=self._force_error_not_created,
+            )
         ref = f"fake_{uuid.uuid4().hex}"
         checkout_url = f"https://fake.local/pay/{ref}"
         self._store[ref] = {
