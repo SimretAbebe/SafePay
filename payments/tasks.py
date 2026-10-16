@@ -12,7 +12,11 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+import urllib.parse
+
 from .models import Payment, WebhookDelivery
+from .webhook_secrets import derive_merchant_secret
+from .webhook_urls import is_target_safe
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +27,18 @@ def log_payment_event(payment_id, event_description):
     return f"Logged: {event_description}"
 
 
-def _sign_payload(timestamp: str, payload_bytes: bytes) -> str:
-    secret = settings.WEBHOOK_SECRET.encode("utf-8")
+def _sign_payload(timestamp: str, payload_bytes: bytes, secret: str = None) -> str:
+    if secret is None:
+        secret = settings.WEBHOOK_SECRET
+    secret_bytes = secret.encode("utf-8")
     to_sign = f"{timestamp}.".encode("utf-8") + payload_bytes
-    return hmac.new(secret, to_sign, hashlib.sha256).hexdigest()
+    return hmac.new(secret_bytes, to_sign, hashlib.sha256).hexdigest()
 
 
 @shared_task
 def deliver_webhook_attempt(webhook_delivery_id):
     try:
-        webhook = WebhookDelivery.objects.get(id=webhook_delivery_id)
+        webhook = WebhookDelivery.objects.select_related("payment__merchant").get(id=webhook_delivery_id)
     except WebhookDelivery.DoesNotExist:
         logger.error(f"WebhookDelivery {webhook_delivery_id} not found")
         return
@@ -40,9 +46,29 @@ def deliver_webhook_attempt(webhook_delivery_id):
     if webhook.status != "pending":
         return
 
+    # Delivery-time safety recheck
+    if not is_target_safe(webhook.target_url):
+        webhook.status = "failed"
+        webhook.last_error = "blocked_target"
+        webhook.save(update_fields=["status", "last_error", "updated_at"])
+        parsed_url = urllib.parse.urlsplit(webhook.target_url)
+        safe_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+        logger.warning(
+            "Webhook delivery %s blocked: target %s failed safety checks",
+            webhook.id,
+            safe_url,
+        )
+        return
+
+    merchant = getattr(webhook.payment, "merchant", None)
+    if merchant:
+        secret = derive_merchant_secret(merchant)
+    else:
+        secret = settings.WEBHOOK_SECRET
+
     payload_bytes = json.dumps(webhook.payload).encode("utf-8")
     timestamp = str(int(time.time()))
-    signature = _sign_payload(timestamp, payload_bytes)
+    signature = _sign_payload(timestamp, payload_bytes, secret=secret)
 
     webhook.attempt_count += 1
 
@@ -57,6 +83,7 @@ def deliver_webhook_attempt(webhook_delivery_id):
                 "X-SafePay-Signature": signature,
             },
             timeout=5,
+            allow_redirects=False,
         )
         webhook.last_response_code = response.status_code
 
@@ -66,10 +93,13 @@ def deliver_webhook_attempt(webhook_delivery_id):
             logger.info(f"Webhook {webhook.id} delivered successfully")
             return
 
-        webhook.last_error = f"Non-2xx response: {response.status_code}"
+        if 300 <= response.status_code < 400:
+            webhook.last_error = f"Redirect rejected: {response.status_code}"
+        else:
+            webhook.last_error = f"Non-2xx response: {response.status_code}"
 
     except requests.RequestException as exc:
-        webhook.last_error = str(exc)
+        webhook.last_error = exc.__class__.__name__
 
     # If  reach here, this attempt failed one way or another.
     if webhook.attempt_count >= webhook.max_attempts:

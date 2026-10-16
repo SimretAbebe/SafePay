@@ -45,6 +45,14 @@ def notify_status_change(payment):
             f"Allowed statuses: {list(STATUS_TO_EVENT_TYPE.keys())}"
         )
 
+    if payment.merchant is None:
+        target_url = settings.WEBHOOK_TARGET_URL
+    else:
+        if not payment.merchant.webhook_url:
+            logger.info("No webhook URL configured for merchant %s; skipping webhook notification", payment.merchant.id)
+            return None
+        target_url = payment.merchant.webhook_url
+
     event_id = uuid.uuid4()
     payload = {
         "id": str(event_id),
@@ -61,7 +69,7 @@ def notify_status_change(payment):
         payment=payment,
         event_id=event_id,
         event_type=event_type,
-        target_url=settings.WEBHOOK_TARGET_URL,
+        target_url=target_url,
         payload=payload,
     )
     deliver_webhook_attempt.delay(webhook.id)
