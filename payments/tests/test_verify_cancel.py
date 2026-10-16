@@ -75,7 +75,10 @@ class CancelEndpointTests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.merchant_a, self.key_a = create_test_merchant("Cancel Merchant A")
+        self.merchant_a, self.key_a = create_test_merchant(
+            "Cancel Merchant A",
+            webhook_url="https://merchant.example.com/webhook",
+        )
         self.merchant_b, self.key_b = create_test_merchant("Cancel Merchant B")
 
        

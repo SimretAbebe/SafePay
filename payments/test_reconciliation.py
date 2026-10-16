@@ -37,7 +37,10 @@ class PaymentReconciliationTests(TransactionTestCase):
     def setUp(self):
         cache.clear()
         FakeProvider.reset()
-        self.merchant, self.api_key = create_test_merchant("Reconciliation Merchant")
+        self.merchant, self.api_key = create_test_merchant(
+            "Reconciliation Merchant",
+            webhook_url="https://merchant.example.com/webhook",
+        )
         self.client = APIClient()
         self.now = timezone.now()
 

@@ -21,7 +21,10 @@ class ProviderSyncTests(TransactionTestCase):
         cache.clear()
         FakeProvider.reset()
         self.client = APIClient()
-        self.merchant_a, self.key_a = create_test_merchant("Sync Merchant A")
+        self.merchant_a, self.key_a = create_test_merchant(
+            "Sync Merchant A",
+            webhook_url="https://merchant.example.com/webhook",
+        )
         self.merchant_b, self.key_b = create_test_merchant("Sync Merchant B")
 
     def tearDown(self):
