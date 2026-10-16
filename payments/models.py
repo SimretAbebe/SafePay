@@ -15,6 +15,9 @@ class Merchant(models.Model):
     default_provider = models.CharField(max_length=30, null=True, blank=True)
     fallback_providers = models.JSONField(default=list, blank=True)
 
+    webhook_url = models.URLField(max_length=500, null=True, blank=True)
+    webhook_secret_version = models.PositiveIntegerField(default=1)
+
     @staticmethod
     def hash_key(raw_key: str) -> str:
         return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
