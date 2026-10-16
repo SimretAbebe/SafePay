@@ -24,7 +24,10 @@ class InboundWebhookTests(TransactionTestCase):
         self.mock_webhook_patcher = patch("payments.tasks.deliver_webhook_attempt.delay")
         self.mock_webhook_delay = self.mock_webhook_patcher.start()
         self.client = APIClient()
-        self.merchant, self.api_key = create_test_merchant("Webhook Merchant")
+        self.merchant, self.api_key = create_test_merchant(
+            "Webhook Merchant",
+            webhook_url="https://merchant.example.com/webhook",
+        )
         self.url = reverse("chapa_webhook")
         self.secret = "test-webhook-secret-xyz"
 
@@ -549,7 +552,10 @@ class ArifPayInboundWebhookTests(TransactionTestCase):
         self.mock_webhook_patcher = patch("payments.tasks.deliver_webhook_attempt.delay")
         self.mock_webhook_delay = self.mock_webhook_patcher.start()
         self.client = APIClient()
-        self.merchant, self.api_key = create_test_merchant("ArifPay Webhook Merchant")
+        self.merchant, self.api_key = create_test_merchant(
+            "ArifPay Webhook Merchant",
+            webhook_url="https://merchant.example.com/webhook",
+        )
         self.url = reverse("arifpay_webhook")
 
     def tearDown(self):

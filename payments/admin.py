@@ -2,6 +2,8 @@ from django import forms
 from django.contrib import admin, messages
 from django.utils import timezone
 
+from django.core.exceptions import ValidationError
+
 from .models import (
     InboundWebhookEvent,
     InvalidStateTransition,
@@ -12,14 +14,25 @@ from .models import (
     WebhookDelivery,
 )
 from .tasks import deliver_webhook_attempt, reconcile_payment
+from .webhook_secrets import derive_merchant_secret
+from .webhook_urls import validate_webhook_url
 
 
 class MerchantAdminForm(forms.ModelForm):
-    """Validate default_provider and fallback_providers before saving."""
+    """Validate default_provider, fallback_providers, and webhook_url before saving."""
 
     class Meta:
         model = Merchant
         fields = "__all__"
+
+    def clean_webhook_url(self):
+        url = self.cleaned_data.get("webhook_url")
+        if url:
+            try:
+                validate_webhook_url(url)
+            except ValidationError as exc:
+                raise forms.ValidationError("Invalid or disallowed webhook URL.") from exc
+        return url
 
     def clean(self):
         from .providers.registry import _registry as _provider_registry
@@ -74,8 +87,57 @@ class MerchantAdminForm(forms.ModelForm):
 @admin.register(Merchant)
 class MerchantAdmin(admin.ModelAdmin):
     form = MerchantAdminForm
-    list_display = ("name", "key_prefix", "is_active", "default_provider", "created_at")
-    readonly_fields = ("api_key_hash", "key_prefix", "created_at")
+    list_display = (
+        "name",
+        "key_prefix",
+        "is_active",
+        "default_provider",
+        "webhook_configured",
+        "created_at",
+    )
+    readonly_fields = ("api_key_hash", "key_prefix", "webhook_secret_version", "created_at")
+    actions = ["show_webhook_secret", "rotate_webhook_secret"]
+
+    @admin.display(description="Webhook configured", boolean=True)
+    def webhook_configured(self, obj):
+        return bool(obj.webhook_url)
+
+    @admin.action(description="Show webhook secret (once)")
+    def show_webhook_secret(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(
+                request,
+                "Please select exactly one merchant to show the webhook secret.",
+                level=messages.ERROR,
+            )
+            return
+        merchant = queryset.first()
+        secret = derive_merchant_secret(merchant)
+        self.message_user(
+            request,
+            f"Webhook signing secret for '{merchant.name}': {secret}",
+            level=messages.SUCCESS,
+        )
+
+    @admin.action(description="Rotate webhook secret")
+    def rotate_webhook_secret(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(
+                request,
+                "Please select exactly one merchant to rotate the webhook secret.",
+                level=messages.ERROR,
+            )
+            return
+        merchant = queryset.first()
+        # TODO: Add a grace period with dual-signing during secret rotation to avoid dropped webhooks.
+        merchant.webhook_secret_version += 1
+        merchant.save(update_fields=["webhook_secret_version"])
+        new_secret = derive_merchant_secret(merchant)
+        self.message_user(
+            request,
+            f"Rotated webhook secret for '{merchant.name}' (v{merchant.webhook_secret_version}): {new_secret}",
+            level=messages.SUCCESS,
+        )
 
     def save_model(self, request, obj, form, change):
         if not change:
