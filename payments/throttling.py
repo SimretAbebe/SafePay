@@ -17,7 +17,8 @@ class PaymentRateThrottle(SimpleRateThrottle):
     def get_cache_key(self, request, view):
         merchant = getattr(request, "merchant", None)
         if merchant:
-            ident = str(merchant.id)
+            livemode = getattr(request, "livemode", False)
+            ident = f"{merchant.id}:{'live' if livemode else 'test'}"
         else:
             ident = self.get_ident(request)
 

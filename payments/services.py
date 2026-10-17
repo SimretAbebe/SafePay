@@ -48,15 +48,24 @@ def notify_status_change(payment):
     if payment.merchant is None:
         target_url = settings.WEBHOOK_TARGET_URL
     else:
-        if not payment.merchant.webhook_url:
-            logger.info("No webhook URL configured for merchant %s; skipping webhook notification", payment.merchant.id)
+        if payment.livemode:
+            target_url = payment.merchant.live_webhook_url
+        else:
+            target_url = payment.merchant.webhook_url
+
+        if not target_url:
+            logger.info(
+                "No webhook URL configured for merchant %s (livemode=%s); skipping webhook notification",
+                payment.merchant.id,
+                payment.livemode,
+            )
             return None
-        target_url = payment.merchant.webhook_url
 
     event_id = uuid.uuid4()
     payload = {
         "id": str(event_id),
         "type": event_type,
+        "livemode": payment.livemode,
         "data": {
             "payment_id": payment.id,
             "idempotency_key": payment.idempotency_key,

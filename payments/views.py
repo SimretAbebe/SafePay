@@ -34,9 +34,11 @@ logger = logging.getLogger(__name__)
 @throttle_classes([PaymentRateThrottle])
 def create_payment(request):
     idempotency_key = request.data.get("idempotency_key")
+    livemode = getattr(request, "livemode", False)
 
     existing_payment = Payment.objects.filter(
         merchant=request.merchant,
+        livemode=livemode,
         idempotency_key=idempotency_key,
     ).first()
     if existing_payment is not None:
@@ -51,10 +53,11 @@ def create_payment(request):
 
     try:
         with transaction.atomic():
-            payment = serializer.save(merchant=request.merchant)
+            payment = serializer.save(merchant=request.merchant, livemode=livemode)
     except IntegrityError:
         payment = Payment.objects.get(
             merchant=request.merchant,
+            livemode=livemode,
             idempotency_key=idempotency_key,
         )
         return Response(
@@ -98,10 +101,12 @@ def create_checkout_session(request):
             )
 
     allow_fallback = validated_data.get("allow_fallback", True)
+    livemode = getattr(request, "livemode", False)
 
     # --- Idempotency: return 200 if session already exists ---
     existing_payment = Payment.objects.filter(
         merchant=request.merchant,
+        livemode=livemode,
         idempotency_key=idempotency_key,
     ).first()
 
@@ -113,6 +118,7 @@ def create_checkout_session(request):
                 "provider": existing_payment.provider,
                 "reference": existing_payment.merchant_reference,
                 "checkout_url": existing_payment.checkout_url,
+                "livemode": existing_payment.livemode,
                 "created_at": existing_payment.created_at,
             },
             status=status.HTTP_200_OK,
@@ -135,6 +141,7 @@ def create_checkout_session(request):
             requested_provider_name,
             allow_fallback,
             _NewPayment(),
+            livemode=livemode,
         )
     else:
         chain = build_provider_chain(
@@ -142,6 +149,13 @@ def create_checkout_session(request):
             requested_provider_name,
             allow_fallback,
             existing_payment,
+            livemode=livemode,
+        )
+
+    if livemode and not chain:
+        return Response(
+            {"detail": "No live-capable provider is configured."},
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
     primary_provider_name = chain[0]
@@ -151,6 +165,7 @@ def create_checkout_session(request):
             with transaction.atomic():
                 payment = Payment.objects.create(
                     merchant=request.merchant,
+                    livemode=livemode,
                     idempotency_key=idempotency_key,
                     amount=amount,
                     sender=sender,
@@ -163,6 +178,7 @@ def create_checkout_session(request):
         except IntegrityError:
             payment = Payment.objects.get(
                 merchant=request.merchant,
+                livemode=livemode,
                 idempotency_key=idempotency_key,
             )
             if payment.checkout_url:
@@ -173,6 +189,7 @@ def create_checkout_session(request):
                         "provider": payment.provider,
                         "reference": payment.merchant_reference,
                         "checkout_url": payment.checkout_url,
+                        "livemode": payment.livemode,
                         "created_at": payment.created_at,
                     },
                     status=status.HTTP_200_OK,
@@ -183,6 +200,7 @@ def create_checkout_session(request):
                 requested_provider_name,
                 allow_fallback,
                 payment,
+                livemode=livemode,
             )
     else:
         payment = existing_payment
@@ -205,6 +223,7 @@ def create_checkout_session(request):
                     "provider": locked_payment.provider,
                     "reference": locked_payment.merchant_reference,
                     "checkout_url": locked_payment.checkout_url,
+                    "livemode": locked_payment.livemode,
                     "created_at": locked_payment.created_at,
                 },
                 status=status.HTTP_200_OK,
@@ -239,6 +258,7 @@ def create_checkout_session(request):
             "provider": locked_payment.provider,
             "reference": locked_payment.merchant_reference,
             "checkout_url": locked_payment.checkout_url,
+            "livemode": locked_payment.livemode,
             "created_at": locked_payment.created_at,
         },
         status=status.HTTP_201_CREATED,
@@ -248,7 +268,12 @@ def create_checkout_session(request):
 @api_view(["GET"])
 @permission_classes([HasAPIKey])
 def payment_detail(request, pk):
-    payment = get_object_or_404(Payment, pk=pk, merchant=request.merchant)
+    payment = get_object_or_404(
+        Payment,
+        pk=pk,
+        merchant=request.merchant,
+        livemode=getattr(request, "livemode", False),
+    )
     return Response(
         PaymentSerializer(payment).data,
         status=status.HTTP_200_OK,
@@ -262,7 +287,12 @@ def verify_payment(request, pk):
     Verify payment status against the provider.
     Asks the provider and is safe to repeat.
     """
-    payment = get_object_or_404(Payment, pk=pk, merchant=request.merchant)
+    payment = get_object_or_404(
+        Payment,
+        pk=pk,
+        merchant=request.merchant,
+        livemode=getattr(request, "livemode", False),
+    )
 
     if payment.provider:
         try:
@@ -296,6 +326,7 @@ def cancel_payment(request, pk):
             Payment.objects.select_for_update(),
             pk=pk,
             merchant=request.merchant,
+            livemode=getattr(request, "livemode", False),
         )
 
         # Cancel guard: reject cancellation for provider-backed payments
