@@ -6,7 +6,7 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 
-def derive_merchant_secret(merchant, version=None) -> str:
+def derive_merchant_secret(merchant, version=None, livemode=False) -> str:
     """
     Derives a deterministic, versioned webhook signing secret for a merchant.
 
@@ -24,7 +24,11 @@ def derive_merchant_secret(merchant, version=None) -> str:
     if version is None:
         version = merchant.webhook_secret_version
 
-    message = f"merchant:{merchant.id}:v{version}".encode("utf-8")
+    if livemode:
+        message = f"merchant:{merchant.id}:live:v{version}".encode("utf-8")
+    else:
+        message = f"merchant:{merchant.id}:v{version}".encode("utf-8")
+
     key = master_secret.encode("utf-8")
     digest = hmac.new(key, message, hashlib.sha256).digest()
     b64_str = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
