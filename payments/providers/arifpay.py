@@ -26,6 +26,8 @@ class ArifPayProvider(PaymentProvider):
 
     name: str = "arifpay"
     supports_cancel: bool = False
+    # TODO: Live credentials and legal review are required first before enabling live mode.
+    supports_livemode: bool = False
 
     # The portal simulator key is ONLY valid for the sandbox PSS endpoint.
     # It must never be used for the hosted checkout endpoint in production.

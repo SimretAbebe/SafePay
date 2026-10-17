@@ -19,6 +19,7 @@ from .base import (
 
 class FakeProvider(PaymentProvider):
     name: str = "fake"
+    supports_livemode: bool = False  # Fake provider must never be used in live mode
 
     STATUS_MAPPING: ClassVar[Dict[str, str]] = {
         "pending": "pending",

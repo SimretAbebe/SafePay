@@ -62,7 +62,10 @@ def deliver_webhook_attempt(webhook_delivery_id):
 
     merchant = getattr(webhook.payment, "merchant", None)
     if merchant:
-        secret = derive_merchant_secret(merchant)
+        secret = derive_merchant_secret(
+            merchant,
+            livemode=getattr(webhook.payment, "livemode", False),
+        )
     else:
         secret = settings.WEBHOOK_SECRET
 

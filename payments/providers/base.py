@@ -82,6 +82,7 @@ class PaymentProvider(ABC):
     """
     name: str
     supports_cancel: bool = True
+    supports_livemode: bool = False
 
     @abstractmethod
     def initialize(self, payment: Any, customer: Optional[dict] = None) -> InitResult:

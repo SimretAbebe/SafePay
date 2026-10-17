@@ -1,4 +1,5 @@
 from django import forms
+from django.conf import settings
 from django.contrib import admin, messages
 from django.utils import timezone
 
@@ -19,7 +20,7 @@ from .webhook_urls import validate_webhook_url
 
 
 class MerchantAdminForm(forms.ModelForm):
-    """Validate default_provider, fallback_providers, and webhook_url before saving."""
+    """Validate default_provider, fallback_providers, and webhook URLs before saving."""
 
     class Meta:
         model = Merchant
@@ -27,6 +28,15 @@ class MerchantAdminForm(forms.ModelForm):
 
     def clean_webhook_url(self):
         url = self.cleaned_data.get("webhook_url")
+        if url:
+            try:
+                validate_webhook_url(url)
+            except ValidationError as exc:
+                raise forms.ValidationError("Invalid or disallowed webhook URL.") from exc
+        return url
+
+    def clean_live_webhook_url(self):
+        url = self.cleaned_data.get("live_webhook_url")
         if url:
             try:
                 validate_webhook_url(url)
@@ -90,13 +100,26 @@ class MerchantAdmin(admin.ModelAdmin):
     list_display = (
         "name",
         "key_prefix",
+        "live_enabled",
         "is_active",
         "default_provider",
         "webhook_configured",
         "created_at",
     )
-    readonly_fields = ("api_key_hash", "key_prefix", "webhook_secret_version", "created_at")
-    actions = ["show_webhook_secret", "rotate_webhook_secret"]
+    readonly_fields = (
+        "api_key_hash",
+        "key_prefix",
+        "live_api_key_hash",
+        "live_key_prefix",
+        "webhook_secret_version",
+        "created_at",
+    )
+    actions = [
+        "show_webhook_secret",
+        "rotate_webhook_secret",
+        "regenerate_test_key_action",
+        "create_live_key_action",
+    ]
 
     @admin.display(description="Webhook configured", boolean=True)
     def webhook_configured(self, obj):
@@ -136,6 +159,51 @@ class MerchantAdmin(admin.ModelAdmin):
         self.message_user(
             request,
             f"Rotated webhook secret for '{merchant.name}' (v{merchant.webhook_secret_version}): {new_secret}",
+            level=messages.SUCCESS,
+        )
+
+    @admin.action(description="Regenerate test key (shown once)")
+    def regenerate_test_key_action(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(
+                request,
+                "Please select exactly one merchant to regenerate test key.",
+                level=messages.ERROR,
+            )
+            return
+        merchant = queryset.first()
+        raw_key = merchant.regenerate_test_key()
+        self.message_user(
+            request,
+            f"New test API key for '{merchant.name}': {raw_key} (Save this key now; it will never be displayed again.)",
+            level=messages.SUCCESS,
+        )
+
+    @admin.action(description="Create live key (shown once)")
+    def create_live_key_action(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(
+                request,
+                "Please select exactly one merchant to create live key.",
+                level=messages.ERROR,
+            )
+            return
+        merchant = queryset.first()
+        if not merchant.live_enabled or not getattr(settings, "LIVE_MODE_AVAILABLE", False):
+            self.message_user(
+                request,
+                "Live mode is not enabled for this merchant or live mode is not available globally.",
+                level=messages.ERROR,
+            )
+            return
+        try:
+            raw_key = merchant.create_live_key()
+        except ValueError as exc:
+            self.message_user(request, str(exc), level=messages.ERROR)
+            return
+        self.message_user(
+            request,
+            f"Live API key for '{merchant.name}': {raw_key} (Save this key now; it will never be displayed again.)",
             level=messages.SUCCESS,
         )
 
@@ -181,6 +249,7 @@ class PaymentAdmin(admin.ModelAdmin):
     list_display = (
         "idempotency_key",
         "merchant",
+        "livemode",
         "provider",
         "provider_reference",
         "provider_status",
@@ -195,12 +264,13 @@ class PaymentAdmin(admin.ModelAdmin):
         "review_reason",
         "created_at",
     )
-    list_filter = ("status", "merchant", "provider", "needs_review")
+    list_filter = ("status", "livemode", "merchant", "provider", "needs_review")
     search_fields = ("idempotency_key", "sender", "receiver", "provider_reference")
     # status is read-only: editing it here would skip transition_to(),
     # bypass the state rules, and create no history row
     readonly_fields = (
         "status",
+        "livemode",
         "provider",
         "provider_reference",
         "provider_status",

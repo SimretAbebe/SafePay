@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 class ChapaProvider(PaymentProvider):
     name: str = "chapa"
     supports_cancel: bool = False
+    # TODO: Live credentials and legal review are required first before enabling live mode.
+    supports_livemode: bool = False
 
     def _get_config(self) -> Dict[str, Any]:
         """Read configuration lazily from Django settings at call time."""

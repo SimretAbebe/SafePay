@@ -28,6 +28,7 @@ def build_provider_chain(
     requested_provider: Optional[str],
     allow_fallback: bool,
     payment: Payment,
+    livemode: bool = False,
 ) -> list:
     """Build ordered list of provider candidates respecting fallback and safety rules."""
     # Determine primary.
@@ -43,20 +44,31 @@ def build_provider_chain(
     ).first()
     if uncertain_attempt:
         # Retry only the provider that had the uncertain failure.
-        return [uncertain_attempt.provider]
+        chain = [uncertain_attempt.provider]
+    else:
+        chain = [primary]
 
-    chain = [primary]
+        if allow_fallback:
+            fallbacks = list(merchant.fallback_providers or [])
+            for name in fallbacks:
+                if name in chain:
+                    continue  # skip duplicates
+                if name not in _provider_registry:
+                    # Skip names not registered (safety: don't silently promote
+                    # an unregistered name).
+                    continue
+                chain.append(name)
 
-    if allow_fallback:
-        fallbacks = list(merchant.fallback_providers or [])
-        for name in fallbacks:
-            if name in chain:
-                continue  # skip duplicates
-            if name not in _provider_registry:
-                # Skip names not registered (safety: don't silently promote
-                # an unregistered name).
+    if livemode:
+        live_chain = []
+        for name in chain:
+            try:
+                p = get_provider(name)
+                if getattr(p, "supports_livemode", False):
+                    live_chain.append(name)
+            except ProviderError:
                 continue
-            chain.append(name)
+        chain = live_chain
 
     return chain
 

@@ -91,8 +91,9 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "dev-secret-change-me")
 WEBHOOK_TARGET_URL = os.getenv("WEBHOOK_TARGET_URL", "https://webhook.site/your-unique-id")
 ALLOW_PRIVATE_WEBHOOK_TARGETS = os.getenv("ALLOW_PRIVATE_WEBHOOK_TARGETS", "True" if DEBUG else "False").lower() in ("true", "1")
 SAFE_PAY_API_KEY = os.getenv("SAFE_PAY_API_KEY", "dev-api-key-change-me")
-ENABLE_FAKE_PROVIDER = os.getenv("ENABLE_FAKE_PROVIDER", "False").lower() in ("true", "1")
-DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "chapa")
+ENABLE_FAKE_PROVIDER = os.getenv("ENABLE_FAKE_PROVIDER", "True").strip().lower() in ("true", "1")
+LIVE_MODE_AVAILABLE = os.getenv("LIVE_MODE_AVAILABLE", "True").strip().lower() in ("true", "1")
+DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "fake").strip()
 FAKE_PROVIDER_SECRET = os.getenv("FAKE_PROVIDER_SECRET", "fake-secret-for-tests")
 
 CHAPA_SECRET_KEY = os.getenv("CHAPA_SECRET_KEY", "")
@@ -153,15 +154,21 @@ if "test" in sys.argv:
 else:
     PAYMENT_THROTTLE_RATE = os.getenv("PAYMENT_THROTTLE_RATE", "100/minute")
     # --- Cache backend (used by rate-limiter) ---
-    # Local-memory cache is per-process, so each gunicorn/runserver worker
-    # keeps its own counter — that's the bug. Redis is shared across all
-    # processes, so the counter is accurate.
-    CACHES = {
-        "default": {
-            "BACKEND": "django.core.cache.backends.redis.RedisCache",
-            "LOCATION": "redis://127.0.0.1:6379/1",
+    _redis_cache_url = os.getenv("REDIS_CACHE_URL")
+    if _redis_cache_url:
+        CACHES = {
+            "default": {
+                "BACKEND": "django.core.cache.backends.redis.RedisCache",
+                "LOCATION": _redis_cache_url.strip('"\''),
+            }
         }
-    }
+    else:
+        CACHES = {
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "safepay-dev-cache",
+            }
+        }
 
 
 DATABASES = {
