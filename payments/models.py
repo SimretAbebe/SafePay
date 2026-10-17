@@ -18,6 +18,12 @@ class Merchant(models.Model):
     webhook_url = models.URLField(max_length=500, null=True, blank=True)
     webhook_secret_version = models.PositiveIntegerField(default=1)
 
+    # Live mode configuration
+    live_enabled = models.BooleanField(default=False)
+    live_api_key_hash = models.CharField(max_length=64, null=True, unique=True, blank=True)
+    live_key_prefix = models.CharField(max_length=12, blank=True, default="")
+    live_webhook_url = models.URLField(max_length=500, null=True, blank=True)
+
     @staticmethod
     def hash_key(raw_key: str) -> str:
         return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
@@ -27,6 +33,20 @@ class Merchant(models.Model):
         raw_key = secrets.token_urlsafe(32)
         api_key_hash = cls.hash_key(raw_key)
         key_prefix = raw_key[:8]
+        return raw_key, api_key_hash, key_prefix
+
+    @classmethod
+    def generate_test_key_pair(cls):
+        raw_key = "sp_test_" + secrets.token_urlsafe(32)
+        api_key_hash = cls.hash_key(raw_key)
+        key_prefix = raw_key[:8]
+        return raw_key, api_key_hash, key_prefix
+
+    @classmethod
+    def generate_live_key_pair(cls):
+        raw_key = "sp_live_" + secrets.token_urlsafe(32)
+        api_key_hash = cls.hash_key(raw_key)
+        key_prefix = raw_key[:12]
         return raw_key, api_key_hash, key_prefix
 
     @classmethod
@@ -40,6 +60,25 @@ class Merchant(models.Model):
             **kwargs,
         )
         return merchant, raw_key
+
+    def regenerate_test_key(self) -> str:
+        raw_key, key_hash, prefix = self.generate_test_key_pair()
+        self.api_key_hash = key_hash
+        self.key_prefix = prefix
+        self.save(update_fields=["api_key_hash", "key_prefix"])
+        return raw_key
+
+    def create_live_key(self) -> str:
+        from django.conf import settings
+        if not self.live_enabled:
+            raise ValueError("Live mode is not enabled for this account.")
+        if not getattr(settings, "LIVE_MODE_AVAILABLE", False):
+            raise ValueError("Live mode is not available yet.")
+        raw_key, key_hash, prefix = self.generate_live_key_pair()
+        self.live_api_key_hash = key_hash
+        self.live_key_prefix = prefix
+        self.save(update_fields=["live_api_key_hash", "live_key_prefix"])
+        return raw_key
 
     def __str__(self):
         return self.name
@@ -79,6 +118,8 @@ class Payment(models.Model):
         null=True,
         blank=True,
     )
+
+    livemode = models.BooleanField(default=False, db_index=True)
 
     idempotency_key = models.CharField(
         max_length=255,
@@ -145,7 +186,7 @@ class Payment(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["merchant", "idempotency_key"],
+                fields=["merchant", "livemode", "idempotency_key"],
                 name="unique_idempotency_key_per_merchant",
             ),
             models.UniqueConstraint(
