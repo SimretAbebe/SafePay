@@ -20,15 +20,3 @@ their real API. SafePay builds the same class of system.
 ## Stack
 
 Django, Django REST Framework, PostgreSQL, Celery, Redis, Docker
-
-## Setup
-
-```bash
-python -m venv venv
-source venv/Scripts/activate  # or venv/bin/activate on Mac/Linux
-pip install -r requirements.txt
-# create a .env file (see .env.example) and a local "safepay" Postgres database
-python manage.py migrate
-python manage.py test
-python manage.py runserver
-```
