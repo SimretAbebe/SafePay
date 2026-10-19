@@ -48,6 +48,7 @@ INSTALLED_APPS = [
 REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'payments': '5/minute',
+        'payment_reads': '120/minute',
         'anon': '10/minute',
     }
 }
@@ -144,7 +145,9 @@ if "test" in sys.argv:
     CELERY_TASK_EAGER_PROPAGATES = True
     CELERY_RESULT_BACKEND = "cache+memory://"
     PAYMENT_THROTTLE_RATE = "10000/minute"
+    PAYMENT_READ_THROTTLE_RATE = "10000/minute"
     ENABLE_FAKE_PROVIDER = True
+    DEFAULT_PROVIDER = "fake"
     CACHES = {
         "default": {
             "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
@@ -153,6 +156,7 @@ if "test" in sys.argv:
     }
 else:
     PAYMENT_THROTTLE_RATE = os.getenv("PAYMENT_THROTTLE_RATE", "100/minute")
+    PAYMENT_READ_THROTTLE_RATE = os.getenv("PAYMENT_READ_THROTTLE_RATE", "120/minute")
     # --- Cache backend (used by rate-limiter) ---
     _redis_cache_url = os.getenv("REDIS_CACHE_URL")
     if _redis_cache_url:
