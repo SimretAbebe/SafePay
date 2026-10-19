@@ -184,6 +184,16 @@ class Payment(models.Model):
         return self.status_history.all()
 
     class Meta:
+        indexes = [
+            models.Index(
+                fields=["merchant", "livemode", "created_at"],
+                name="pay_merch_live_created_idx",
+            ),
+            models.Index(
+                fields=["merchant", "livemode", "status", "created_at"],
+                name="pay_merch_live_status_idx",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["merchant", "livemode", "idempotency_key"],
