@@ -24,6 +24,25 @@ class PaymentSerializer(serializers.ModelSerializer):
         extra_kwargs = {"idempotency_key": {"validators": []}}
 
 
+class PaymentListItemSerializer(serializers.ModelSerializer):
+    reference = serializers.CharField(source="merchant_reference", allow_null=True)
+
+    class Meta:
+        model = Payment
+        fields = [
+            "id",
+            "status",
+            "amount",
+            "provider",
+            "reference",
+            "checkout_url",
+            "livemode",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
 class CheckoutSessionSerializer(serializers.Serializer):
     """Validates checkout session request payload and routing overrides."""
     amount = serializers.DecimalField(
