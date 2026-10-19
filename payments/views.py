@@ -1,13 +1,17 @@
+from datetime import datetime, time, timezone
 import hashlib
 import logging
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.utils.dateparse import parse_date, parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.pagination import CursorPagination
 from rest_framework.response import Response
 
 from .models import InboundWebhookEvent, Payment
@@ -21,12 +25,160 @@ from .providers import (
     get_provider,
 )
 from .routing import build_provider_chain, start_checkout
-from .serializers import CheckoutSessionSerializer, PaymentSerializer
+from .serializers import CheckoutSessionSerializer, PaymentListItemSerializer, PaymentSerializer
 from .services import notify_status_change, schedule_first_check, sync_payment_from_provider
 from .tasks import log_payment_event
-from .throttling import PaymentRateThrottle
+from .throttling import PaymentRateThrottle, PaymentReadRateThrottle
 
 logger = logging.getLogger(__name__)
+
+
+def parse_iso_datetime(val: str, is_end_of_day: bool = False) -> datetime:
+    if not isinstance(val, str) or not val.strip():
+        raise ValueError("Invalid ISO 8601 date or datetime.")
+    val = val.strip()
+    d = parse_date(val)
+    if d is not None:
+        t = time.max.replace(microsecond=999999) if is_end_of_day else time.min
+        return datetime.combine(d, t, tzinfo=timezone.utc)
+    dt = parse_datetime(val)
+    if dt is not None:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    try:
+        dt = datetime.fromisoformat(val)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        pass
+    raise ValueError(f"Invalid ISO 8601 date or datetime: {val}")
+
+
+class PaymentCursorPagination(CursorPagination):
+    page_size = 20
+    page_size_query_param = "limit"
+    max_page_size = 100
+    ordering = ("-created_at", "-id")
+
+    def get_page_size(self, request):
+        if self.page_size_query_param in request.query_params:
+            raw_limit = request.query_params[self.page_size_query_param]
+            try:
+                val = int(raw_limit)
+            except (ValueError, TypeError):
+                raise ValidationError({"detail": f"Invalid limit: '{raw_limit}'. Must be an integer."})
+            if val <= 0:
+                raise ValidationError({"detail": f"Invalid limit: {val}. Must be greater than 0."})
+            if self.max_page_size and val > self.max_page_size:
+                return self.max_page_size
+            return val
+        return self.page_size
+
+    def paginate_queryset(self, queryset, request, view=None):
+        try:
+            return super().paginate_queryset(queryset, request, view)
+        except (NotFound, Exception) as exc:
+            if isinstance(exc, ValidationError):
+                raise
+            raise ValidationError({"detail": "Invalid or tampered cursor."})
+
+
+@api_view(["GET"])
+@permission_classes([HasAPIKey])
+@throttle_classes([PaymentReadRateThrottle])
+def list_payments(request):
+    # Base queryset scoped by merchant and livemode
+    queryset = Payment.objects.filter(
+        merchant=request.merchant,
+        livemode=request.livemode,
+    )
+
+    # status filter
+    status_param = request.query_params.get("status")
+    if status_param is not None:
+        valid_statuses = {choice[0] for choice in Payment.STATUS_CHOICES}
+        if status_param not in valid_statuses:
+            return Response(
+                {"detail": f"Invalid status: '{status_param}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        queryset = queryset.filter(status=status_param)
+
+    # provider filter
+    provider_param = request.query_params.get("provider")
+    if provider_param is not None:
+        queryset = queryset.filter(provider=provider_param)
+
+    # reference filter
+    reference_param = request.query_params.get("reference")
+    if reference_param is not None:
+        queryset = queryset.filter(merchant_reference=reference_param)
+
+    # created_after and created_before filters
+    created_after_param = request.query_params.get("created_after")
+    created_before_param = request.query_params.get("created_before")
+
+    parsed_after = None
+    parsed_before = None
+
+    if created_after_param is not None:
+        try:
+            parsed_after = parse_iso_datetime(created_after_param, is_end_of_day=False)
+        except ValueError:
+            return Response(
+                {"detail": f"Invalid created_after date or datetime: '{created_after_param}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if created_before_param is not None:
+        try:
+            parsed_before = parse_iso_datetime(created_before_param, is_end_of_day=True)
+        except ValueError:
+            return Response(
+                {"detail": f"Invalid created_before date or datetime: '{created_before_param}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if parsed_after is not None and parsed_before is not None:
+        if parsed_after > parsed_before:
+            return Response(
+                {"detail": "created_after cannot be later than created_before."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if parsed_after is not None:
+        queryset = queryset.filter(created_at__gte=parsed_after)
+    if parsed_before is not None:
+        queryset = queryset.filter(created_at__lte=parsed_before)
+
+    # Optimize column selection: only columns needed for response and ordering
+    queryset = queryset.only(
+        "id",
+        "status",
+        "amount",
+        "provider",
+        "merchant_reference",
+        "checkout_url",
+        "livemode",
+        "created_at",
+        "updated_at",
+    )
+
+    paginator = PaymentCursorPagination()
+    page = paginator.paginate_queryset(queryset, request)
+    serializer = PaymentListItemSerializer(page, many=True)
+    return paginator.get_paginated_response(serializer.data)
+
+
+@csrf_exempt
+def payments_dispatch(request, *args, **kwargs):
+    if request.method == "GET":
+        return list_payments(request, *args, **kwargs)
+    elif request.method == "POST":
+        return create_payment(request, *args, **kwargs)
+    return HttpResponseNotAllowed(["GET", "POST"])
 
 
 @api_view(["POST"])
