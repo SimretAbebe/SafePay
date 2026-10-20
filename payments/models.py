@@ -2,6 +2,7 @@ import hashlib
 import secrets
 import uuid
 from django.db import models
+from django.utils import timezone
 
 
 class Merchant(models.Model):
@@ -155,6 +156,8 @@ class Payment(models.Model):
     sync_attempts = models.PositiveSmallIntegerField(default=0)
     needs_review = models.BooleanField(default=False, db_index=True)
     review_reason = models.CharField(max_length=40, blank=True, default="")
+    needs_review_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    review_alerted_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -178,6 +181,27 @@ class Payment(models.Model):
             from_status=old_status,
             to_status=new_status,
         )
+
+    def flag_for_review(self, reason, now=None):
+        """Set needs_review=True with timestamps. Only sets needs_review_at
+        if the payment was not already flagged, so we never overwrite the
+        original queue-entry time. Always resets review_alerted_at so the
+        alert system picks it up again."""
+        if now is None:
+            now = timezone.now()
+        self.needs_review = True
+        self.review_reason = reason
+        self.next_sync_at = None
+        if not self.needs_review_at:
+            self.needs_review_at = now
+        self.review_alerted_at = None
+
+    def clear_review_flag(self):
+        """Clear the review flag and all related timestamps."""
+        self.needs_review = False
+        self.review_reason = ""
+        self.needs_review_at = None
+        self.review_alerted_at = None
 
     @property
     def history(self):
@@ -211,6 +235,16 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.idempotency_key} - {self.status} - {self.amount}"
+
+
+class ReviewQueuePayment(Payment):
+    """Proxy model providing a dedicated admin view for the review queue.
+    Does not create or alter any database table."""
+
+    class Meta:
+        proxy = True
+        verbose_name = "Review queue item"
+        verbose_name_plural = "Review queue"
 
 
 class WebhookDelivery(models.Model):

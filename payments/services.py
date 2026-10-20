@@ -14,6 +14,13 @@ from .tasks import deliver_webhook_attempt
 
 logger = logging.getLogger(__name__)
 
+
+def _schedule_review_alert():
+    """Called via transaction.on_commit after a payment is flagged for review."""
+    from .alerts import schedule_review_alert
+    schedule_review_alert()
+
+
 STATUS_TO_EVENT_TYPE = {
     "succeeded": "payment.succeeded",
     "failed": "payment.failed",
@@ -242,18 +249,19 @@ def reconcile_one(payment_id, now=None) -> ReconcileResult:
             payment.last_synced_at = now
 
             if sync_result.outcome == "mismatch":
-                payment.needs_review = True
-                payment.review_reason = "mismatch"
-                payment.next_sync_at = None
+                payment.flag_for_review("mismatch", now=now)
                 payment.save(
                     update_fields=[
                         "needs_review",
                         "review_reason",
+                        "needs_review_at",
+                        "review_alerted_at",
                         "next_sync_at",
                         "last_synced_at",
                         "updated_at",
                     ]
                 )
+                transaction.on_commit(_schedule_review_alert)
                 return ReconcileResult(outcome="mismatch", payment=payment)
 
             # If payment reached terminal state (succeeded, failed, cancelled, expired)
@@ -288,27 +296,26 @@ def reconcile_one(payment_id, now=None) -> ReconcileResult:
 
         except UnsupportedProviderStatus:
             payment.last_synced_at = now
-            payment.needs_review = True
-            payment.review_reason = "unsupported_status"
-            payment.next_sync_at = None
+            payment.flag_for_review("unsupported_status", now=now)
             payment.save(
                 update_fields=[
                     "needs_review",
                     "review_reason",
+                    "needs_review_at",
+                    "review_alerted_at",
                     "next_sync_at",
                     "last_synced_at",
                     "updated_at",
                 ]
             )
+            transaction.on_commit(_schedule_review_alert)
             return ReconcileResult(outcome="unsupported_status", payment=payment)
 
         except ProviderError:
             payment.last_synced_at = now
             payment.sync_attempts += 1
             if payment.sync_attempts >= max_attempts:
-                payment.needs_review = True
-                payment.review_reason = "unknown_outcome"
-                payment.next_sync_at = None
+                payment.flag_for_review("unknown_outcome", now=now)
             else:
                 delay = backoff_delay(payment.sync_attempts)
                 payment.next_sync_at = now + timedelta(seconds=delay)
@@ -317,11 +324,15 @@ def reconcile_one(payment_id, now=None) -> ReconcileResult:
                     "sync_attempts",
                     "needs_review",
                     "review_reason",
+                    "needs_review_at",
+                    "review_alerted_at",
                     "next_sync_at",
                     "last_synced_at",
                     "updated_at",
                 ]
             )
+            if payment.needs_review:
+                transaction.on_commit(_schedule_review_alert)
             return ReconcileResult(outcome="unknown", payment=payment)
 
         except Exception:
@@ -329,9 +340,7 @@ def reconcile_one(payment_id, now=None) -> ReconcileResult:
             payment.last_synced_at = now
             payment.sync_attempts += 1
             if payment.sync_attempts >= max_attempts:
-                payment.needs_review = True
-                payment.review_reason = "unknown_outcome"
-                payment.next_sync_at = None
+                payment.flag_for_review("unknown_outcome", now=now)
             else:
                 delay = backoff_delay(payment.sync_attempts)
                 payment.next_sync_at = now + timedelta(seconds=delay)
@@ -340,10 +349,14 @@ def reconcile_one(payment_id, now=None) -> ReconcileResult:
                     "sync_attempts",
                     "needs_review",
                     "review_reason",
+                    "needs_review_at",
+                    "review_alerted_at",
                     "next_sync_at",
                     "last_synced_at",
                     "updated_at",
                 ]
             )
+            if payment.needs_review:
+                transaction.on_commit(_schedule_review_alert)
             return ReconcileResult(outcome="unknown", payment=payment)
 
