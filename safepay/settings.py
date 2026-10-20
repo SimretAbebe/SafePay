@@ -125,10 +125,28 @@ RECONCILE_BATCH_SIZE = int(os.getenv("RECONCILE_BATCH_SIZE", "50"))
 RECONCILE_LEASE_SECONDS = int(os.getenv("RECONCILE_LEASE_SECONDS", "120"))
 RECONCILE_JITTER = float(os.getenv("RECONCILE_JITTER", "0.1"))
 
+# Review queue alerting
+REVIEW_ALERT_COOLDOWN_SECONDS = int(os.getenv("REVIEW_ALERT_COOLDOWN_SECONDS", "300"))
+REVIEW_ALERT_SWEEP_SECONDS = int(os.getenv("REVIEW_ALERT_SWEEP_SECONDS", "900"))
+REVIEW_DIGEST_HOUR_UTC = int(os.getenv("REVIEW_DIGEST_HOUR_UTC", "6"))
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+RECONCILE_HEARTBEAT_URL = os.getenv("RECONCILE_HEARTBEAT_URL", "")
+
+from celery.schedules import crontab
+
 CELERY_BEAT_SCHEDULE = {
     "reconcile_pending_payments": {
         "task": "payments.tasks.reconcile_pending_payments",
         "schedule": RECONCILE_SWEEP_SECONDS,
+    },
+    "review_alert_sweep": {
+        "task": "payments.tasks.alert_new_reviews",
+        "schedule": REVIEW_ALERT_SWEEP_SECONDS,
+    },
+    "review_queue_digest": {
+        "task": "payments.tasks.review_queue_digest",
+        "schedule": crontab(hour=REVIEW_DIGEST_HOUR_UTC, minute=0),
     },
 }
 
