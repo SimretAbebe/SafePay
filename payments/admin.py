@@ -12,6 +12,7 @@ from .models import (
     Payment,
     PaymentStatusHistory,
     ProviderAttempt,
+    ReviewQueuePayment,
     WebhookDelivery,
 )
 from .tasks import deliver_webhook_attempt, reconcile_payment
@@ -282,6 +283,8 @@ class PaymentAdmin(admin.ModelAdmin):
         "last_synced_at",
         "needs_review",
         "review_reason",
+        "needs_review_at",
+        "review_alerted_at",
         "created_at",
         "updated_at",
     )
@@ -322,6 +325,8 @@ class PaymentAdmin(admin.ModelAdmin):
         count = queryset.update(
             needs_review=False,
             review_reason="",
+            needs_review_at=None,
+            review_alerted_at=None,
             sync_attempts=0,
             next_sync_at=now,
         )
@@ -394,3 +399,90 @@ class InboundWebhookEventAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+REVIEW_REASON_LABELS = {
+    "unknown_outcome": "Provider could not be reached",
+    "unsupported_status": "Provider reported a status SafePay does not support",
+    "mismatch": "SafePay and the provider disagree about a finished payment",
+}
+
+
+@admin.register(ReviewQueuePayment)
+class ReviewQueuePaymentAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "merchant",
+        "provider",
+        "review_reason_label",
+        "sync_attempts",
+        "last_synced_at",
+        "age",
+        "payment_reference",
+    )
+    list_filter = ("review_reason", "provider", "merchant")
+    ordering = ("needs_review_at", "id")
+    readonly_fields = (
+        "id",
+        "merchant",
+        "provider",
+        "provider_reference",
+        "provider_status",
+        "status",
+        "review_reason",
+        "needs_review",
+        "needs_review_at",
+        "review_alerted_at",
+        "sync_attempts",
+        "last_synced_at",
+        "next_sync_at",
+        "created_at",
+        "updated_at",
+    )
+    actions = ["check_with_provider_now", "clear_review_and_recheck"]
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(needs_review=True)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description="Reason")
+    def review_reason_label(self, obj):
+        return REVIEW_REASON_LABELS.get(obj.review_reason, obj.review_reason)
+
+    @admin.display(description="Age")
+    def age(self, obj):
+        from .alerts import format_age
+        if obj.needs_review_at:
+            return format_age(timezone.now() - obj.needs_review_at)
+        return "—"
+
+    @admin.display(description="Reference")
+    def payment_reference(self, obj):
+        ref = obj.provider_reference or ""
+        return ref[:20] + "…" if len(ref) > 20 else ref
+
+    @admin.action(description="Check with provider now")
+    def check_with_provider_now(self, request, queryset):
+        count = 0
+        for payment in queryset:
+            reconcile_payment.delay(payment.id)
+            count += 1
+        self.message_user(request, f"{count} payment(s) queued for provider check.", level=messages.SUCCESS)
+
+    @admin.action(description="Clear review flag and re-check")
+    def clear_review_and_recheck(self, request, queryset):
+        now = timezone.now()
+        count = queryset.update(
+            needs_review=False,
+            review_reason="",
+            needs_review_at=None,
+            review_alerted_at=None,
+            sync_attempts=0,
+            next_sync_at=now,
+        )
+        self.message_user(request, f"{count} payment(s) review flag cleared and queued for check.", level=messages.SUCCESS)
