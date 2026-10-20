@@ -8,7 +8,7 @@ import time
 import requests
 from celery import shared_task
 from django.conf import settings
-from django.db import transaction
+from django.db import models, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -187,4 +187,96 @@ def reconcile_pending_payments():
         due_count,
         dispatched_count,
     )
-    return {"due_count": due_count, "dispatched_count": dispatched_count}
+
+    # Heartbeat: signal a monitoring service that the sweep completed.
+    heartbeat_url = getattr(settings, "RECONCILE_HEARTBEAT_URL", "")
+    if heartbeat_url:
+        try:
+            requests.get(heartbeat_url, timeout=3)
+        except Exception:
+            pass  # silently ignore — never raise or log the URL
+
+    return {"due_count": due_count, "dispatched_count": dispatched_count}
+
+
+@shared_task
+def alert_new_reviews():
+    """Send one grouped alert for all un-alerted review-queue payments."""
+    from .alerts import format_age, send_alert_message
+
+    now = timezone.now()
+
+    # Step 1: lock rows to prevent duplicate alerts from concurrent workers.
+    # select_related("merchant") is NOT allowed here because merchant is a
+    # nullable FK and PostgreSQL rejects FOR UPDATE on outer-join sides.
+    with transaction.atomic():
+        locked_ids = list(
+            Payment.objects.select_for_update(skip_locked=True)
+            .filter(needs_review=True, review_alerted_at__isnull=True)
+            .order_by("needs_review_at", "id")
+            .values_list("id", flat=True)
+        )
+
+    if not locked_ids:
+        return
+
+    # Step 2: fetch full objects with merchant for message formatting.
+    payments = list(
+        Payment.objects.filter(id__in=locked_ids)
+        .select_related("merchant")
+        .order_by("needs_review_at", "id")
+    )
+
+    if not payments:
+        return
+
+    max_lines = 10
+    shown = payments[:max_lines]
+    extra = len(payments) - max_lines
+
+    lines = [f"\u26a0\ufe0f {len(payments)} payment(s) need review:\n"]
+    for p in shown:
+        merchant_name = p.merchant.name if p.merchant else "—"
+        age = format_age(now - p.needs_review_at) if p.needs_review_at else "?"
+        lines.append(
+            f"  payment {p.id} | {merchant_name} | {p.provider or '—'}"
+            f" | {p.review_reason} | age {age}"
+        )
+    if extra > 0:
+        lines.append(f"  +{extra} more")
+
+    message = "\n".join(lines)
+    ok = send_alert_message(message)
+
+    if ok:
+        shown_ids = [p.id for p in shown]
+        Payment.objects.filter(id__in=shown_ids).update(review_alerted_at=now)
+
+
+@shared_task
+def review_queue_digest():
+    """Send a daily digest of the review queue. Does nothing if the queue is empty."""
+    from .alerts import format_age, send_alert_message
+
+    now = timezone.now()
+    qs = Payment.objects.filter(needs_review=True)
+    total = qs.count()
+
+    if total == 0:
+        return
+
+    # Counts per reason
+    reason_counts = {}
+    for row in qs.values("review_reason").annotate(count=models.Count("id")):
+        reason_counts[row["review_reason"] or "unknown"] = row["count"]
+
+    oldest = qs.order_by("needs_review_at").values_list("needs_review_at", flat=True).first()
+    oldest_age = format_age(now - oldest) if oldest else "?"
+
+    lines = [f"\U0001f4cb Review queue digest: {total} item(s)\n"]
+    for reason, count in sorted(reason_counts.items()):
+        lines.append(f"  {reason}: {count}")
+    lines.append(f"\n  Oldest item age: {oldest_age}")
+
+    send_alert_message("\n".join(lines))
+
