@@ -138,8 +138,6 @@ def sync_payment_from_provider(payment_id) -> SyncResult:
                 payment.transition_to("processing")
                 outcome = "updated"
             else:
-                # Target status cannot be legally reached from pending
-                # TODO: A later reconciliation job should flag these status mismatches for manual review.
                 logger.warning(
                     "Provider status mismatch for payment %s: current status '%s', provider returned '%s' (mapped '%s')",
                     payment.id,
@@ -147,14 +145,12 @@ def sync_payment_from_provider(payment_id) -> SyncResult:
                     payment.provider_status,
                     target_status,
                 )
-                return SyncResult(outcome="mismatch", payment=payment)
+                outcome = "mismatch"
         elif current_status == "processing":
             if target_status in ("succeeded", "failed"):
                 payment.transition_to(target_status)
                 outcome = "updated"
             else:
-                # Target status cannot be legally reached from processing
-                # TODO: A later reconciliation job should flag these status mismatches for manual review.
                 logger.warning(
                     "Provider status mismatch for payment %s: current status '%s', provider returned '%s' (mapped '%s')",
                     payment.id,
@@ -162,18 +158,34 @@ def sync_payment_from_provider(payment_id) -> SyncResult:
                     payment.provider_status,
                     target_status,
                 )
-                return SyncResult(outcome="mismatch", payment=payment)
+                outcome = "mismatch"
         else:
-            # Payment is already in a terminal state (succeeded, failed, cancelled, expired)
-            # Cannot be reached legally from terminal state
-            # TODO: A later reconciliation job should flag these status mismatches for manual review.
-            logger.warning(
-                "Provider status mismatch for payment %s: current status '%s', provider returned '%s' (mapped '%s')",
-                payment.id,
-                current_status,
-                payment.provider_status,
-                target_status,
+            if current_status == "expired" and target_status == "pending":
+                # The payment expired in SafePay and remains unpaid at the provider.
+                outcome = "unchanged"
+            else:
+                logger.warning(
+                    "Provider status mismatch for payment %s: current status '%s', provider returned '%s' (mapped '%s')",
+                    payment.id,
+                    current_status,
+                    payment.provider_status,
+                    target_status,
+                )
+                outcome = "mismatch"
+
+        if outcome == "mismatch":
+            payment.flag_for_review("mismatch")
+            payment.save(
+                update_fields=[
+                    "needs_review",
+                    "review_reason",
+                    "needs_review_at",
+                    "review_alerted_at",
+                    "next_sync_at",
+                    "updated_at",
+                ]
             )
+            transaction.on_commit(_schedule_review_alert)
             return SyncResult(outcome="mismatch", payment=payment)
 
         if outcome == "updated" and (not initial_terminal) and (payment.status in TERMINAL_STATUSES):
@@ -278,7 +290,8 @@ def reconcile_one(payment_id, now=None) -> ReconcileResult:
             # Reachable but still pending
             payment.sync_attempts += 1
             if payment.sync_attempts >= max_attempts:
-                # TODO: A later expiry feature will handle abandoned payments
+                # Payments that remain pending after max reconciliation attempts stop being
+                # re-checked here and are expired by the expiry sweep when their time comes.
                 payment.next_sync_at = None
             else:
                 delay = backoff_delay(payment.sync_attempts)
@@ -359,4 +372,73 @@ def reconcile_one(payment_id, now=None) -> ReconcileResult:
             if payment.needs_review:
                 transaction.on_commit(_schedule_review_alert)
             return ReconcileResult(outcome="unknown", payment=payment)
+
+
+def expire_one(payment_id, now=None) -> str:
+    if now is None:
+        now = timezone.now()
+
+    pk = getattr(payment_id, "pk", payment_id)
+    grace_seconds = getattr(settings, "EXPIRY_GRACE_SECONDS", 900)
+    grace_delta = timedelta(seconds=grace_seconds)
+
+    with transaction.atomic():
+        try:
+            payment = Payment.objects.select_for_update().get(pk=pk)
+        except Payment.DoesNotExist:
+            return "skipped"
+
+        # 1. Skip if the payment is not pending, or expires_at is NULL,
+        #    or now < expires_at + EXPIRY_GRACE_SECONDS, or needs_review is True.
+        if (
+            payment.status != "pending"
+            or payment.expires_at is None
+            or now < payment.expires_at + grace_delta
+            or payment.needs_review
+        ):
+            return "skipped"
+
+        # 2. If the payment has a provider and provider_reference:
+        #    call sync_payment_from_provider logic (reuses state-change logic safely inside savepoint).
+        if payment.provider and payment.provider_reference:
+            try:
+                sync_result = sync_payment_from_provider(payment.pk)
+                payment = sync_result.payment
+            except ProviderError:
+                logger.warning(
+                    "Provider unavailable during expiry check for payment %s",
+                    payment.id,
+                )
+                return "unknown"
+            except Exception:
+                logger.exception(
+                    "Unexpected error during expiry check for payment %s",
+                    payment.id,
+                )
+                return "unknown"
+
+            # Outcomes:
+            # - provider says paid/failed/cancelled/processing (or mismatch/flagged):
+            #   existing sync logic updated the payment; return "settled" (do NOT expire).
+            if payment.status in ("succeeded", "failed", "cancelled", "processing"):
+                return "settled"
+
+            if sync_result.outcome == "mismatch" or payment.needs_review:
+                return "settled"
+
+            # Provider says still pending (or sync returns "unchanged" while pending) -> continue
+            if payment.status != "pending":
+                return "settled"
+
+        # 3. Only then: payment.transition_to("expired"), clear next_sync_at,
+        #    and notify_status_change after commit.
+        payment.transition_to("expired")
+        payment.next_sync_at = None
+        payment.save(update_fields=["next_sync_at", "updated_at"])
+
+        p = payment
+        transaction.on_commit(lambda: notify_status_change(p))
+
+        return "expired"
+
 

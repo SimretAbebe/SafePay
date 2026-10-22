@@ -1,10 +1,11 @@
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 import hashlib
 import logging
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone as dj_timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -203,9 +204,16 @@ def create_payment(request):
     serializer = PaymentSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
+    expiry_seconds = getattr(settings, "PAYMENT_EXPIRY_SECONDS", 86400)
+    expires_at = dj_timezone.now() + timedelta(seconds=expiry_seconds)
+
     try:
         with transaction.atomic():
-            payment = serializer.save(merchant=request.merchant, livemode=livemode)
+            payment = serializer.save(
+                merchant=request.merchant,
+                livemode=livemode,
+                expires_at=expires_at,
+            )
     except IntegrityError:
         payment = Payment.objects.get(
             merchant=request.merchant,
@@ -255,6 +263,13 @@ def create_checkout_session(request):
     allow_fallback = validated_data.get("allow_fallback", True)
     livemode = getattr(request, "livemode", False)
 
+    expires_in_minutes = validated_data.get("expires_in_minutes")
+    if expires_in_minutes is not None:
+        lifetime_seconds = expires_in_minutes * 60
+    else:
+        lifetime_seconds = getattr(settings, "PAYMENT_EXPIRY_SECONDS", 86400)
+    expires_at = dj_timezone.now() + timedelta(seconds=lifetime_seconds)
+
     # --- Idempotency: return 200 if session already exists ---
     existing_payment = Payment.objects.filter(
         merchant=request.merchant,
@@ -262,14 +277,15 @@ def create_checkout_session(request):
         idempotency_key=idempotency_key,
     ).first()
 
-    if existing_payment and existing_payment.checkout_url:
+    if existing_payment and (existing_payment.checkout_url or existing_payment.status != "pending"):
         return Response(
             {
                 "id": existing_payment.id,
                 "status": existing_payment.status,
                 "provider": existing_payment.provider,
                 "reference": existing_payment.merchant_reference,
-                "checkout_url": existing_payment.checkout_url,
+                "checkout_url": existing_payment.checkout_url if existing_payment.status == "pending" else None,
+                "expires_at": existing_payment.expires_at.isoformat() if existing_payment.expires_at else None,
                 "livemode": existing_payment.livemode,
                 "created_at": existing_payment.created_at,
             },
@@ -326,6 +342,7 @@ def create_checkout_session(request):
                     return_url=return_url,
                     provider=primary_provider_name,
                     status="pending",
+                    expires_at=expires_at,
                 )
         except IntegrityError:
             payment = Payment.objects.get(
@@ -333,14 +350,15 @@ def create_checkout_session(request):
                 livemode=livemode,
                 idempotency_key=idempotency_key,
             )
-            if payment.checkout_url:
+            if payment.checkout_url or payment.status != "pending":
                 return Response(
                     {
                         "id": payment.id,
                         "status": payment.status,
                         "provider": payment.provider,
                         "reference": payment.merchant_reference,
-                        "checkout_url": payment.checkout_url,
+                        "checkout_url": payment.checkout_url if payment.status == "pending" else None,
+                        "expires_at": payment.expires_at.isoformat() if payment.expires_at else None,
                         "livemode": payment.livemode,
                         "created_at": payment.created_at,
                     },
@@ -367,14 +385,15 @@ def create_checkout_session(request):
 
     with transaction.atomic():
         locked_payment = Payment.objects.select_for_update().get(pk=payment.pk)
-        if locked_payment.checkout_url:
+        if locked_payment.checkout_url or locked_payment.status != "pending":
             return Response(
                 {
                     "id": locked_payment.id,
                     "status": locked_payment.status,
                     "provider": locked_payment.provider,
                     "reference": locked_payment.merchant_reference,
-                    "checkout_url": locked_payment.checkout_url,
+                    "checkout_url": locked_payment.checkout_url if locked_payment.status == "pending" else None,
+                    "expires_at": locked_payment.expires_at.isoformat() if locked_payment.expires_at else None,
                     "livemode": locked_payment.livemode,
                     "created_at": locked_payment.created_at,
                 },
@@ -409,7 +428,8 @@ def create_checkout_session(request):
             "status": locked_payment.status,
             "provider": locked_payment.provider,
             "reference": locked_payment.merchant_reference,
-            "checkout_url": locked_payment.checkout_url,
+            "checkout_url": locked_payment.checkout_url if locked_payment.status == "pending" else None,
+            "expires_at": locked_payment.expires_at.isoformat() if locked_payment.expires_at else None,
             "livemode": locked_payment.livemode,
             "created_at": locked_payment.created_at,
         },
@@ -467,7 +487,7 @@ def verify_payment(request, pk):
 
 
 # Statuses that cannot be cancelled because they are already terminal
-_NON_CANCELLABLE_STATUSES = {"processing", "succeeded", "failed"}
+_NON_CANCELLABLE_STATUSES = {"processing", "succeeded", "failed", "expired"}
 
 
 @api_view(["POST"])

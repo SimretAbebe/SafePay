@@ -263,6 +263,7 @@ class PaymentAdmin(admin.ModelAdmin):
         "last_synced_at",
         "needs_review",
         "review_reason",
+        "expires_at",
         "created_at",
     )
     list_filter = ("status", "livemode", "merchant", "provider", "needs_review")
@@ -285,6 +286,7 @@ class PaymentAdmin(admin.ModelAdmin):
         "review_reason",
         "needs_review_at",
         "review_alerted_at",
+        "expires_at",
         "created_at",
         "updated_at",
     )
