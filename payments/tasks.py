@@ -200,6 +200,55 @@ def reconcile_pending_payments():
 
 
 @shared_task
+def expire_pending_payments():
+    from .services import expire_one
+
+    now = timezone.now()
+    batch_size = getattr(settings, "EXPIRY_BATCH_SIZE", 50)
+    grace_seconds = getattr(settings, "EXPIRY_GRACE_SECONDS", 900)
+    cutoff = now - timedelta(seconds=grace_seconds)
+
+    # Pick candidate IDs inside a short atomic transaction with select_for_update(skip_locked=True).
+    # This immediately commits/releases batch row locks so provider calls never happen inside a long
+    # transaction holding multiple row locks.
+    with transaction.atomic():
+        candidate_ids = list(
+            Payment.objects.select_for_update(skip_locked=True)
+            .filter(
+                status="pending",
+                expires_at__isnull=False,
+                expires_at__lte=cutoff,
+                needs_review=False,
+            )
+            .order_by("expires_at")
+            .values_list("id", flat=True)[:batch_size]
+        )
+
+    counts = {"expired": 0, "settled": 0, "unknown": 0, "skipped": 0}
+
+    for payment_id in candidate_ids:
+        try:
+            outcome = expire_one(payment_id, now=now)
+            if outcome in counts:
+                counts[outcome] += 1
+            else:
+                counts["unknown"] += 1
+        except Exception:
+            logger.exception("Unexpected error expiring payment %s", payment_id)
+            counts["unknown"] += 1
+
+    logger.info(
+        "Expiry sweep: expired=%d, settled=%d, unknown=%d, skipped=%d",
+        counts["expired"],
+        counts["settled"],
+        counts["unknown"],
+        counts["skipped"],
+    )
+
+    return counts
+
+
+@shared_task
 def alert_new_reviews():
     """Send one grouped alert for all un-alerted review-queue payments."""
     from .alerts import format_age, send_alert_message
