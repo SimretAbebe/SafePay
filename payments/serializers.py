@@ -1,5 +1,6 @@
 from decimal import Decimal
 from urllib.parse import urlparse
+from django.conf import settings
 from rest_framework import serializers
 
 from .models import Payment
@@ -7,6 +8,8 @@ from .providers import get_provider, ProviderError
 
 
 class PaymentSerializer(serializers.ModelSerializer):
+    checkout_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Payment
         fields = [
@@ -16,12 +19,27 @@ class PaymentSerializer(serializers.ModelSerializer):
             "sender",
             "receiver",
             "status",
+            "checkout_url",
+            "expires_at",
             "livemode",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "status", "livemode", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "status",
+            "checkout_url",
+            "expires_at",
+            "livemode",
+            "created_at",
+            "updated_at",
+        ]
         extra_kwargs = {"idempotency_key": {"validators": []}}
+
+    def get_checkout_url(self, obj):
+        if obj.status != "pending":
+            return None
+        return obj.checkout_url
 
 
 class PaymentListItemSerializer(serializers.ModelSerializer):
@@ -96,6 +114,25 @@ class CheckoutSessionSerializer(serializers.Serializer):
         required=False,
         default=True,
     )
+    expires_in_minutes = serializers.IntegerField(
+        required=False,
+        allow_null=False,
+        default=None,
+    )
+
+    def validate_expires_in_minutes(self, value):
+        raw = self.initial_data.get("expires_in_minutes")
+        if raw is not None:
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                raise serializers.ValidationError("expires_in_minutes must be an integer.")
+            min_sec = getattr(settings, "PAYMENT_EXPIRY_MIN_SECONDS", 900)
+            max_sec = getattr(settings, "PAYMENT_EXPIRY_MAX_SECONDS", 604800)
+            lifetime_sec = value * 60
+            if lifetime_sec < min_sec or lifetime_sec > max_sec:
+                raise serializers.ValidationError(
+                    f"expires_in_minutes must result in a lifetime between {min_sec} and {max_sec} seconds."
+                )
+        return value
 
     def validate_allow_fallback(self, value):
         """Enforce strict boolean types (reject truthy/falsy strings like 'yes')."""
