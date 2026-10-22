@@ -159,6 +159,9 @@ class Payment(models.Model):
     needs_review_at = models.DateTimeField(null=True, blank=True, db_index=True)
     review_alerted_at = models.DateTimeField(null=True, blank=True)
 
+    # Existing rows stay NULL and NEVER expire automatically.
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
