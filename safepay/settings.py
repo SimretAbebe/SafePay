@@ -133,12 +133,24 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 RECONCILE_HEARTBEAT_URL = os.getenv("RECONCILE_HEARTBEAT_URL", "")
 
+# Payment expiry configuration
+PAYMENT_EXPIRY_SECONDS = int(os.getenv("PAYMENT_EXPIRY_SECONDS", "86400"))
+PAYMENT_EXPIRY_MIN_SECONDS = int(os.getenv("PAYMENT_EXPIRY_MIN_SECONDS", "900"))
+PAYMENT_EXPIRY_MAX_SECONDS = int(os.getenv("PAYMENT_EXPIRY_MAX_SECONDS", "604800"))
+EXPIRY_GRACE_SECONDS = int(os.getenv("EXPIRY_GRACE_SECONDS", "900"))
+EXPIRY_SWEEP_SECONDS = int(os.getenv("EXPIRY_SWEEP_SECONDS", "60"))
+EXPIRY_BATCH_SIZE = int(os.getenv("EXPIRY_BATCH_SIZE", "50"))
+
 from celery.schedules import crontab
 
 CELERY_BEAT_SCHEDULE = {
     "reconcile_pending_payments": {
         "task": "payments.tasks.reconcile_pending_payments",
         "schedule": RECONCILE_SWEEP_SECONDS,
+    },
+    "expire_pending_payments": {
+        "task": "payments.tasks.expire_pending_payments",
+        "schedule": EXPIRY_SWEEP_SECONDS,
     },
     "review_alert_sweep": {
         "task": "payments.tasks.alert_new_reviews",
