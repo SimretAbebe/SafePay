@@ -150,13 +150,3 @@ docker compose exec web python manage.py test
 
 ---
 
-## Roadmap
-
-- **Provider Session Cancellation**: Implement programmatic cancel/void once Chapa and ArifPay expose endpoints.
-- **Automated Refunds**: Add ledger adjustments, refund models, and provider refund APIs.
-- **Production Live Mode Activation**: Complete merchant agreements, add production credentials, and open live mode.
-- **Merchant Self-Service Dashboard**: Web interface for viewing payment logs, managing webhook URLs, and rotating keys.
-- **Egress Proxy for Webhooks**: Route outbound webhooks through an egress proxy to eliminate DNS rebinding (TOCTOU) risks.
-
----
-
