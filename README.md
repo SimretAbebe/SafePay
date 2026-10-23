@@ -160,9 +160,3 @@ docker compose exec web python manage.py test
 
 ---
 
-## Contact
-
-- **GitHub**: [github.com/SimretAbebe](https://github.com/SimretAbebe)
-- **X**: [@SimretA12](https://x.com/SimretA12)
-
-I'm open for small paid projects.
