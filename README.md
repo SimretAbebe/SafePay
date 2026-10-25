@@ -128,15 +128,6 @@ if not is_valid:
 
 ---
 
-## Security Notes
-
-- **Hashed Keys**: Raw keys are never stored; only SHA-256 hashes (`api_key_hash`) are persisted.
-- **Derived Secrets**: Webhook signing secrets are derived deterministically on the fly (`derive_merchant_secret`) from a master secret, enabling per-merchant rotation without database migrations.
-- **URL Safety Checks (SSRF Prevention)**: Target URLs must use HTTPS and are resolved to block private, loopback, and cloud metadata IPs (`169.254.169.254`). Re-checked at delivery time.
-- **Verify-Before-Trust**: Inbound gateway webhooks do not mutate payment state directly; SafePay always queries the gateway's authoritative verification API before updating status.
-
----
-
 ## Running the Tests
 
 ```bash
