@@ -42,10 +42,12 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'drf_spectacular',
     'payments',
 ]
 
 REST_FRAMEWORK = {
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_THROTTLE_RATES': {
         'payments': '5/minute',
         'payment_reads': '120/minute',
@@ -257,3 +259,78 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ── API documentation ─────────────────────────────────────────────────
+API_DOCS_ENABLED = os.getenv(
+    "API_DOCS_ENABLED",
+    "True" if DEBUG else "False",
+).strip().lower() in ("true", "1")
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "SafePay API",
+    "DESCRIPTION": (
+        "SafePay is a payments aggregation API that lets merchants create checkout\n"
+        "sessions, track payment status, and receive webhook notifications.\n\n"
+        "> **Note:** All API traffic runs in **test mode** unless a live-mode API key is used.\n\n"
+        "---\n\n"
+        "## Outbound Webhook Contract\n\n"
+        "When a payment reaches a terminal state (`succeeded`, `failed`, `cancelled`, `expired`),\n"
+        "SafePay delivers a POST request to the webhook URL configured on the merchant.\n\n"
+        "### Headers\n\n"
+        "| Header | Description |\n"
+        "|---|---|\n"
+        "| `X-SafePay-Event-Id` | UUID v4 uniquely identifying this event delivery. |\n"
+        "| `X-SafePay-Timestamp` | Integer UNIX timestamp (seconds) when the event was created. |\n"
+        "| `X-SafePay-Signature` | HMAC-SHA256 hex digest used to verify authenticity. |\n\n"
+        "### Payload Shape\n\n"
+        "```json\n"
+        "{\n"
+        '  \"id\": \"evt_a1b2c3d4-…\",\n'
+        '  \"type\": \"payment.succeeded\",\n'
+        '  \"livemode\": false,\n'
+        '  \"data\": {\n'
+        '    \"payment_id\": 42,\n'
+        '    \"idempotency_key\": \"order-1001\",\n'
+        '    \"status\": \"succeeded\",\n'
+        '    \"amount\": \"150.00\"\n'
+        "  }\n"
+        "}\n"
+        "```\n\n"
+        "### Event Types\n\n"
+        "| Event | Trigger |\n"
+        "|---|---|\n"
+        "| `payment.succeeded` | Payment was confirmed by the provider. |\n"
+        "| `payment.failed` | Provider reported failure. |\n"
+        "| `payment.cancelled` | Merchant cancelled a pending payment. |\n"
+        "| `payment.expired` | Payment was not completed before its expiry window. |\n\n"
+        "### Verifying a Webhook Signature\n\n"
+        "1. Retrieve the `X-SafePay-Timestamp` and `X-SafePay-Signature` headers.\n"
+        "2. Build the signed content: `{timestamp}.{raw_request_body}`.\n"
+        "3. Compute HMAC-SHA256 of the signed content using your merchant webhook secret as the key.\n"
+        "4. Compare the computed hex digest with `X-SafePay-Signature` using a constant-time comparison.\n"
+        "5. **Replay protection:** reject events where `abs(now - timestamp) > 300` seconds (5 min window).\n\n"
+        "> **Important:** Treat a webhook as a *hint*. Always confirm the payment status by calling\n"
+        "> the [verify endpoint](#tag/Payments/operation/verify_payment) before fulfilling an order.\n"
+    ),
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SECURITY": [{"apiKey": []}],
+    "APPEND_COMPONENTS": {
+        "securitySchemes": {
+            "apiKey": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-API-Key",
+                "description": "Merchant API key. Test keys start with `sp_test_`, live keys with `sp_live_`.",
+            }
+        }
+    },
+    "EXCLUDE_PATH_REGEX": [
+        r"^/admin/",
+        r"^/api/webhooks/",
+    ],
+    "TAGS": [
+        {"name": "Checkout", "description": "Create and manage checkout sessions."},
+        {"name": "Payments", "description": "Query, verify, and cancel payments."},
+    ],
+}
