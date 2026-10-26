@@ -15,6 +15,9 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import CursorPagination
 from rest_framework.response import Response
 
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse, OpenApiExample
+from drf_spectacular.types import OpenApiTypes
+
 from .models import InboundWebhookEvent, Payment
 from .permissions import HasAPIKey
 from .providers import (
@@ -86,6 +89,30 @@ class PaymentCursorPagination(CursorPagination):
             raise ValidationError({"detail": "Invalid or tampered cursor."})
 
 
+@extend_schema(
+    summary="List payments",
+    description=(
+        "Returns a cursor-paginated list of payments belonging to the authenticated merchant.\n\n"
+        "Filter by `status`, `provider`, `reference`, `created_after`, and `created_before`.\n"
+        "Use `limit` to control page size (max 100) and `cursor` for pagination."
+    ),
+    parameters=[
+        OpenApiParameter("limit", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Page size (1–100, default 20)."),
+        OpenApiParameter("cursor", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Opaque cursor returned in `next`/`previous` links."),
+        OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Filter by payment status (pending, processing, succeeded, failed, cancelled, expired)."),
+        OpenApiParameter("provider", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Filter by provider name (e.g. `chapa`, `arifpay`, `fake`)."),
+        OpenApiParameter("reference", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Filter by merchant reference."),
+        OpenApiParameter("created_after", OpenApiTypes.STR, OpenApiParameter.QUERY, description="ISO 8601 date or datetime. Only payments created at or after this value."),
+        OpenApiParameter("created_before", OpenApiTypes.STR, OpenApiParameter.QUERY, description="ISO 8601 date or datetime. Only payments created at or before this value."),
+    ],
+    responses={
+        200: OpenApiResponse(description="Paginated list of payments."),
+        400: OpenApiResponse(description="Invalid filter parameter or cursor."),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        429: OpenApiResponse(description="Rate limit exceeded."),
+    },
+    tags=["Payments"],
+)
 @api_view(["GET"])
 @permission_classes([HasAPIKey])
 @throttle_classes([PaymentReadRateThrottle])
@@ -174,6 +201,26 @@ def list_payments(request):
 
 
 @csrf_exempt
+@extend_schema(
+    methods=['GET'],
+    summary='List payments',
+    description='Returns a cursor‑paginated list of payments for the authenticated merchant.',
+    responses={200: OpenApiResponse(description='Paginated list of payments.')},
+    tags=['Payments'],
+)
+@extend_schema(
+    methods=['POST'],
+    summary='Create a payment',
+    description='Creates a new payment. Returns 200 with Idempotent‑Replayed header if the Idempotency‑Key was already used.',
+    request=PaymentSerializer,
+    responses={
+        201: OpenApiResponse(response=PaymentSerializer, description='Payment created.'),
+        200: OpenApiResponse(response=PaymentSerializer, description='Idempotent replay – existing payment returned. Includes `Idempotent‑Replayed` header.'),
+        400: OpenApiResponse(description='Validation error.'),
+        403: OpenApiResponse(description='Invalid or missing API key.'),
+    },
+    tags=['Payments'],
+)
 def payments_dispatch(request, *args, **kwargs):
     if request.method == "GET":
         return list_payments(request, *args, **kwargs)
@@ -182,6 +229,40 @@ def payments_dispatch(request, *args, **kwargs):
     return HttpResponseNotAllowed(["GET", "POST"])
 
 
+@extend_schema(
+    summary="Create a payment",
+    description=(
+        "Creates a new payment record. Uses the `idempotency_key` field in the request body \n"
+        "for idempotency. If a payment with the same key already exists the existing payment \n"
+        "is returned with status 200 and the response header `Idempotent-Replayed: true`.\n\n"
+        "This is the low-level endpoint. For hosted checkout, use *Create checkout session* instead."
+    ),
+    request=PaymentSerializer,
+    responses={
+        201: OpenApiResponse(response=PaymentSerializer, description="Payment created."),
+        200: OpenApiResponse(
+            response=PaymentSerializer,
+            description="Idempotent replay — existing payment returned. Includes `Idempotent-Replayed` header set to `true`.",
+        ),
+        400: OpenApiResponse(description="Validation error."),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        429: OpenApiResponse(description="Rate limit exceeded."),
+    },
+    examples=[
+        OpenApiExample(
+            "Create payment request",
+            value={"idempotency_key": "order-1001", "amount": "150.00", "sender": "customer@example.com", "receiver": "Acme Corp"},
+            request_only=True,
+        ),
+        OpenApiExample(
+            "Create payment response",
+            value={"id": 42, "idempotency_key": "order-1001", "amount": "150.00", "sender": "customer@example.com", "receiver": "Acme Corp", "status": "pending", "checkout_url": None, "expires_at": "2026-10-27T18:00:00Z", "livemode": False, "created_at": "2026-10-26T18:00:00Z", "updated_at": "2026-10-26T18:00:00Z"},
+            response_only=True,
+            status_codes=["201"],
+        ),
+    ],
+    tags=["Payments"],
+)
 @api_view(["POST"])
 @permission_classes([HasAPIKey])
 @throttle_classes([PaymentRateThrottle])
@@ -196,10 +277,12 @@ def create_payment(request):
     ).first()
     if existing_payment is not None:
         log_payment_event.delay(existing_payment.id, "payment created")
-        return Response(
+        response = Response(
             PaymentSerializer(existing_payment).data,
             status=status.HTTP_200_OK,
         )
+        response["Idempotent-Replayed"] = "true"
+        return response
 
     serializer = PaymentSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -220,10 +303,12 @@ def create_payment(request):
             livemode=livemode,
             idempotency_key=idempotency_key,
         )
-        return Response(
+        response = Response(
             PaymentSerializer(payment).data,
             status=status.HTTP_200_OK,
         )
+        response["Idempotent-Replayed"] = "true"
+        return response
 
     return Response(
         PaymentSerializer(payment).data,
@@ -231,6 +316,54 @@ def create_payment(request):
     )
 
 
+@extend_schema(
+    summary="Create a checkout session",
+    description=(
+        "Initiates a hosted checkout session with a payment provider.\n\n"
+        "The `Idempotency-Key` request header is **required** (max 100 chars). "
+        "Repeating a request with the same key returns the existing session with status 200 "
+        "and the response header `Idempotent-Replayed: true`.\n\n"
+        "On success the response contains a `checkout_url` that the customer should be "
+        "redirected to. If all providers fail, a 502 is returned and the request can be retried "
+        "with the same idempotency key."
+    ),
+    parameters=[
+        OpenApiParameter(
+            "Idempotency-Key",
+            OpenApiTypes.STR,
+            OpenApiParameter.HEADER,
+            required=True,
+            description="Unique key for idempotent session creation (max 100 characters).",
+        ),
+    ],
+    request=CheckoutSessionSerializer,
+    responses={
+        201: OpenApiResponse(
+            description="Checkout session created.",
+            examples=[
+                OpenApiExample(
+                    "Checkout session created",
+                    value={"id": 42, "status": "pending", "provider": "chapa", "reference": "ORDER-1001", "checkout_url": "https://checkout.chapa.co/pay/test-ref", "expires_at": "2026-10-27T18:00:00Z", "livemode": False, "created_at": "2026-10-26T18:00:00Z"},
+                ),
+            ],
+        ),
+        200: OpenApiResponse(
+            description="Idempotent replay — existing session returned. Includes `Idempotent-Replayed` header set to `true`.",
+        ),
+        400: OpenApiResponse(description="Validation error or missing/invalid Idempotency-Key."),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        429: OpenApiResponse(description="Rate limit exceeded."),
+        502: OpenApiResponse(description="Payment provider unavailable."),
+    },
+    examples=[
+        OpenApiExample(
+            "Checkout session request",
+            value={"amount": "150.00", "reference": "ORDER-1001", "return_url": "https://example.com/complete", "provider": "chapa", "customer_email": "customer@example.com"},
+            request_only=True,
+        ),
+    ],
+    tags=["Checkout"],
+)
 @api_view(["POST"])
 @permission_classes([HasAPIKey])
 @throttle_classes([PaymentRateThrottle])
@@ -278,7 +411,7 @@ def create_checkout_session(request):
     ).first()
 
     if existing_payment and (existing_payment.checkout_url or existing_payment.status != "pending"):
-        return Response(
+        response = Response(
             {
                 "id": existing_payment.id,
                 "status": existing_payment.status,
@@ -291,6 +424,8 @@ def create_checkout_session(request):
             },
             status=status.HTTP_200_OK,
         )
+        response["Idempotent-Replayed"] = "true"
+        return response
 
     customer_email = validated_data.get("customer_email")
     sender = customer_email or "customer"
@@ -351,7 +486,7 @@ def create_checkout_session(request):
                 idempotency_key=idempotency_key,
             )
             if payment.checkout_url or payment.status != "pending":
-                return Response(
+                response = Response(
                     {
                         "id": payment.id,
                         "status": payment.status,
@@ -364,6 +499,8 @@ def create_checkout_session(request):
                     },
                     status=status.HTTP_200_OK,
                 )
+                response["Idempotent-Replayed"] = "true"
+                return response
             # Re-build chain for the existing payment's prior attempts.
             chain = build_provider_chain(
                 request.merchant,
@@ -386,7 +523,7 @@ def create_checkout_session(request):
     with transaction.atomic():
         locked_payment = Payment.objects.select_for_update().get(pk=payment.pk)
         if locked_payment.checkout_url or locked_payment.status != "pending":
-            return Response(
+            response = Response(
                 {
                     "id": locked_payment.id,
                     "status": locked_payment.status,
@@ -399,6 +536,8 @@ def create_checkout_session(request):
                 },
                 status=status.HTTP_200_OK,
             )
+            response["Idempotent-Replayed"] = "true"
+            return response
 
         # start_checkout never raises; attempt rows are committed with the transaction.
         routing_result = start_checkout(
@@ -437,6 +576,16 @@ def create_checkout_session(request):
     )
 
 
+@extend_schema(
+    summary="Retrieve a payment",
+    description="Returns full details of a single payment by its ID, scoped to the authenticated merchant.",
+    responses={
+        200: OpenApiResponse(response=PaymentSerializer, description="Payment details."),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        404: OpenApiResponse(description="Payment not found."),
+    },
+    tags=["Payments"],
+)
 @api_view(["GET"])
 @permission_classes([HasAPIKey])
 def payment_detail(request, pk):
@@ -452,6 +601,29 @@ def payment_detail(request, pk):
     )
 
 
+@extend_schema(
+    summary="Verify a payment",
+    description=(
+        "Queries the payment provider for the latest status and synchronises it locally.\n\n"
+        "Safe to call repeatedly. Use this to confirm a webhook notification before "
+        "fulfilling an order."
+    ),
+    responses={
+        200: OpenApiResponse(
+            description="Current payment status.",
+            examples=[
+                OpenApiExample(
+                    "Verified payment",
+                    value={"id": 42, "status": "succeeded", "updated_at": "2026-10-26T18:05:00Z"},
+                ),
+            ],
+        ),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        404: OpenApiResponse(description="Payment not found."),
+        502: OpenApiResponse(description="Payment provider unavailable."),
+    },
+    tags=["Payments"],
+)
 @api_view(["GET"])
 @permission_classes([HasAPIKey])
 def verify_payment(request, pk):
@@ -490,6 +662,29 @@ def verify_payment(request, pk):
 _NON_CANCELLABLE_STATUSES = {"processing", "succeeded", "failed", "expired"}
 
 
+@extend_schema(
+    summary="Cancel a payment",
+    description=(
+        "Cancels a pending payment that has **no** provider checkout session.\n\n"
+        "Provider-backed payments cannot be cancelled through this endpoint (returns 409). "
+        "Already-cancelled payments return 200 idempotently."
+    ),
+    responses={
+        200: OpenApiResponse(
+            description="Payment cancelled (or was already cancelled).",
+            examples=[
+                OpenApiExample(
+                    "Cancelled payment",
+                    value={"id": 42, "status": "cancelled"},
+                ),
+            ],
+        ),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        404: OpenApiResponse(description="Payment not found."),
+        409: OpenApiResponse(description="Payment cannot be cancelled (provider-backed or terminal state)."),
+    },
+    tags=["Payments"],
+)
 @api_view(["POST"])
 @permission_classes([HasAPIKey])
 def cancel_payment(request, pk):
@@ -541,6 +736,7 @@ def cancel_payment(request, pk):
 
 @csrf_exempt
 @require_POST
+@extend_schema(exclude=True)
 def chapa_webhook(request):
     # Existing Chapa webhook – unchanged
     body = request.body
@@ -651,6 +847,7 @@ def chapa_webhook(request):
 
 @csrf_exempt
 @require_POST
+@extend_schema(exclude=True)
 def arifpay_webhook(request):
     """Handle ArifPay webhook callbacks.
 
