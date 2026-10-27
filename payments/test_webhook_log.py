@@ -19,6 +19,7 @@ import sys
 import uuid
 from unittest.mock import call, patch
 
+from django.conf import settings
 from django.contrib.admin.sites import AdminSite
 from django.core.cache import cache
 from django.test import RequestFactory, TestCase, override_settings
@@ -684,7 +685,7 @@ class SchemaValidationTest(TestCase):
             text=True,
             encoding="utf-8",
             env=env,
-            cwd=r"c:\Users\HP\Desktop\SafePay",
+            cwd=str(settings.BASE_DIR),
         )
         self.assertEqual(
             result.returncode, 0,
@@ -700,7 +701,7 @@ class SchemaValidationTest(TestCase):
             text=True,
             encoding="utf-8",
             env=env,
-            cwd=r"c:\Users\HP\Desktop\SafePay",
+            cwd=str(settings.BASE_DIR),
         )
         schema_text = result.stdout
         self.assertIn("/api/webhook-deliveries/", schema_text)
