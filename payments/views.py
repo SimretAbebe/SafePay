@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
 
-from .models import InboundWebhookEvent, Payment
+from .models import InboundWebhookEvent, Payment, WebhookDelivery
 from .permissions import HasAPIKey
 from .providers import (
     ChapaProvider,
@@ -30,9 +30,9 @@ from .providers import (
 )
 from .routing import build_provider_chain, start_checkout
 from .serializers import CheckoutSessionSerializer, PaymentListItemSerializer, PaymentSerializer
-from .services import notify_status_change, schedule_first_check, sync_payment_from_provider
+from .services import notify_status_change, resend_delivery, schedule_first_check, sync_payment_from_provider
 from .tasks import log_payment_event
-from .throttling import PaymentRateThrottle, PaymentReadRateThrottle
+from .throttling import PaymentRateThrottle, PaymentReadRateThrottle, WebhookResendThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -204,11 +204,11 @@ def list_payments(request):
 @extend_schema(
     methods=['POST'],
     summary='Create a payment',
-    description='Creates a new payment. Returns 200 with Idempotent‑Replayed header if the Idempotency‑Key was already used.',
+    description='Creates a new payment. Returns 200 with Idempotent-Replayed header if the Idempotency-Key was already used.',
     request=PaymentSerializer,
     responses={
         201: OpenApiResponse(response=PaymentSerializer, description='Payment created.'),
-        200: OpenApiResponse(response=PaymentSerializer, description='Idempotent replay – existing payment returned. Includes `Idempotent‑Replayed` header.'),
+        200: OpenApiResponse(response=PaymentSerializer, description='Idempotent replay - existing payment returned. Includes `Idempotent-Replayed` header.'),
         400: OpenApiResponse(description='Validation error.'),
         403: OpenApiResponse(description='Invalid or missing API key.'),
     },
@@ -932,3 +932,374 @@ def arifpay_webhook(request):
         body_sha256=body_sha256,
     )
     return JsonResponse({"status": "ok"}, status=200)
+
+
+# ---------------------------------------------------------------------------
+# Webhook Delivery Log
+# ---------------------------------------------------------------------------
+
+import urllib.parse as _urlparse
+
+# Ordered list of (pattern, code) for error_code derivation.
+# Patterns are checked in order; the first match wins.
+_LAST_ERROR_PATTERNS = [
+    ("blocked_target", "blocked_target"),
+    ("Timeout", "timeout"),
+    ("timeout", "timeout"),
+    ("ConnectionError", "connection_error"),
+    ("connection_error", "connection_error"),
+    ("Redirect rejected", "redirect"),
+    ("redirect", "redirect"),
+]
+
+
+def _derive_error_code(last_error: str) -> str:
+    """
+    Map a raw last_error string to a short public error_code.
+
+    Rules (in precedence order):
+    - None / empty string → ""
+    - Exact "blocked_target" → "blocked_target"
+    - Contains "Timeout" or "timeout" → "timeout"
+    - Contains "ConnectionError" or "connection_error" → "connection_error"
+    - Contains "Redirect rejected" or "redirect" → "redirect"
+    - Starts with "Non-2xx response: 4" → "http_4xx"
+    - Starts with "Non-2xx response: 5" → "http_5xx"
+    - Otherwise → "unknown"
+    """
+    if not last_error:
+        return ""
+    err = last_error
+    # Exact match for blocked_target
+    if err == "blocked_target":
+        return "blocked_target"
+    # Timeout variants (class names or messages)
+    if "Timeout" in err or "timeout" in err:
+        return "timeout"
+    # Connection error variants
+    if "ConnectionError" in err or "connection_error" in err:
+        return "connection_error"
+    # Redirect
+    if "Redirect rejected" in err or "redirect" in err:
+        return "redirect"
+    # HTTP 4xx / 5xx via the "Non-2xx response: NNN" message
+    if err.startswith("Non-2xx response: "):
+        try:
+            code = int(err.split("Non-2xx response: ", 1)[1].strip())
+            if 400 <= code < 500:
+                return "http_4xx"
+            if 500 <= code < 600:
+                return "http_5xx"
+        except (ValueError, IndexError):
+            pass
+    return "unknown"
+
+
+def _delivery_to_dict(delivery) -> dict:
+    """
+    Serialize a WebhookDelivery to the allowed field set.
+    Never exposes raw last_error, full target_url, payload or signatures.
+    """
+    # target_host: hostname only, strip scheme/path/query/port/credentials
+    try:
+        parsed = _urlparse.urlsplit(delivery.target_url)
+        # netloc may contain port (host:port); split it off
+        target_host = parsed.hostname or ""
+    except Exception:
+        target_host = ""
+
+    return {
+        "id": delivery.id,
+        "event_id": str(delivery.event_id),
+        "event_type": delivery.event_type,
+        "payment_id": delivery.payment_id,
+        "status": delivery.status,
+        "attempt_count": delivery.attempt_count,
+        "max_attempts": delivery.max_attempts,
+        "last_response_code": delivery.last_response_code,
+        "error_code": _derive_error_code(delivery.last_error or ""),
+        "target_host": target_host,
+        "livemode": delivery.payment.livemode,
+        "created_at": delivery.created_at,
+        "updated_at": delivery.updated_at,
+    }
+
+
+class WebhookDeliveryCursorPagination(CursorPagination):
+    """Cursor pagination for webhook deliveries: newest first, id tie-break."""
+    page_size = 20
+    page_size_query_param = "limit"
+    max_page_size = 100
+    ordering = ("-created_at", "-id")
+
+    def get_page_size(self, request):
+        if self.page_size_query_param in request.query_params:
+            raw_limit = request.query_params[self.page_size_query_param]
+            try:
+                val = int(raw_limit)
+            except (ValueError, TypeError):
+                raise ValidationError({"detail": f"Invalid limit: '{raw_limit}'. Must be an integer."})
+            if val <= 0:
+                raise ValidationError({"detail": f"Invalid limit: {val}. Must be greater than 0."})
+            if self.max_page_size and val > self.max_page_size:
+                return self.max_page_size
+            return val
+        return self.page_size
+
+    def paginate_queryset(self, queryset, request, view=None):
+        try:
+            return super().paginate_queryset(queryset, request, view)
+        except (NotFound, Exception) as exc:
+            if isinstance(exc, ValidationError):
+                raise
+            raise ValidationError({"detail": "Invalid or tampered cursor."})
+
+
+_VALID_DELIVERY_STATUSES = {choice[0] for choice in WebhookDelivery.STATUS_CHOICES}
+
+_DELIVERY_LIST_EXAMPLE = {
+    "next": "https://api.safepay.example/api/webhook-deliveries/?cursor=abc123",
+    "previous": None,
+    "results": [
+        {
+            "id": 7,
+            "event_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "event_type": "payment.cancelled",
+            "payment_id": 42,
+            "status": "failed",
+            "attempt_count": 5,
+            "max_attempts": 5,
+            "last_response_code": None,
+            "error_code": "connection_error",
+            "target_host": "hooks.example.com",
+            "livemode": False,
+            "created_at": "2026-10-27T15:00:00Z",
+            "updated_at": "2026-10-27T15:05:00Z",
+        }
+    ],
+}
+
+_DELIVERY_DETAIL_EXAMPLE = {
+    "id": 7,
+    "event_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "event_type": "payment.cancelled",
+    "payment_id": 42,
+    "status": "failed",
+    "attempt_count": 5,
+    "max_attempts": 5,
+    "last_response_code": None,
+    "error_code": "connection_error",
+    "target_host": "hooks.example.com",
+    "livemode": False,
+    "created_at": "2026-10-27T15:00:00Z",
+    "updated_at": "2026-10-27T15:05:00Z",
+}
+
+
+@extend_schema(
+    summary="List webhook deliveries",
+    description=(
+        "Returns a cursor-paginated list of outbound webhook delivery attempts belonging "
+        "to the authenticated merchant's payments, filtered by livemode.\n\n"
+        "**Safe fields only**: `error_code` is a short public code; raw error messages, "
+        "signatures, the full target URL (path/query/credentials) and the payload are "
+        "never returned.\n\n"
+        "Filter parameters (all optional, AND logic):\n"
+        "- `status` — one of `pending`, `succeeded`, `failed`\n"
+        "- `event_type` — exact match (e.g. `payment.cancelled`)\n"
+        "- `payment_id` — integer payment primary key\n"
+        "- `created_after` / `created_before` — ISO 8601 date or datetime"
+    ),
+    parameters=[
+        OpenApiParameter("limit", OpenApiTypes.INT, OpenApiParameter.QUERY,
+                         description="Page size (1–100, default 20)."),
+        OpenApiParameter("cursor", OpenApiTypes.STR, OpenApiParameter.QUERY,
+                         description="Opaque cursor returned in next/previous links."),
+        OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY,
+                         description="Filter by delivery status: pending, succeeded, or failed."),
+        OpenApiParameter("event_type", OpenApiTypes.STR, OpenApiParameter.QUERY,
+                         description="Filter by event type, e.g. payment.cancelled."),
+        OpenApiParameter("payment_id", OpenApiTypes.INT, OpenApiParameter.QUERY,
+                         description="Filter by payment ID (integer)."),
+        OpenApiParameter("created_after", OpenApiTypes.STR, OpenApiParameter.QUERY,
+                         description="ISO 8601 date or datetime lower bound."),
+        OpenApiParameter("created_before", OpenApiTypes.STR, OpenApiParameter.QUERY,
+                         description="ISO 8601 date or datetime upper bound."),
+    ],
+    responses={
+        200: OpenApiResponse(
+            description="Paginated list of webhook deliveries.",
+            examples=[OpenApiExample("List response", value=_DELIVERY_LIST_EXAMPLE)],
+        ),
+        400: OpenApiResponse(description="Invalid filter parameter or cursor."),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        429: OpenApiResponse(description="Rate limit exceeded."),
+    },
+    tags=["Webhook Deliveries"],
+)
+@api_view(["GET"])
+@permission_classes([HasAPIKey])
+@throttle_classes([PaymentReadRateThrottle])
+def list_webhook_deliveries(request):
+    """List webhook deliveries for the authenticated merchant (scoped by livemode)."""
+    queryset = WebhookDelivery.objects.select_related("payment").filter(
+        payment__merchant=request.merchant,
+        payment__livemode=request.livemode,
+    )
+
+    # --- status filter ---
+    status_param = request.query_params.get("status")
+    if status_param is not None:
+        if status_param not in _VALID_DELIVERY_STATUSES:
+            return Response(
+                {"detail": f"Invalid status: '{status_param}'. Valid values: {sorted(_VALID_DELIVERY_STATUSES)}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        queryset = queryset.filter(status=status_param)
+
+    # --- event_type filter ---
+    event_type_param = request.query_params.get("event_type")
+    if event_type_param is not None:
+        queryset = queryset.filter(event_type=event_type_param)
+
+    # --- payment_id filter ---
+    payment_id_param = request.query_params.get("payment_id")
+    if payment_id_param is not None:
+        try:
+            payment_id_int = int(payment_id_param)
+        except (ValueError, TypeError):
+            return Response(
+                {"detail": f"Invalid payment_id: '{payment_id_param}'. Must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        queryset = queryset.filter(payment_id=payment_id_int)
+
+    # --- date filters (same rules as payments list) ---
+    created_after_param = request.query_params.get("created_after")
+    created_before_param = request.query_params.get("created_before")
+
+    parsed_after = None
+    parsed_before = None
+
+    if created_after_param is not None:
+        try:
+            parsed_after = parse_iso_datetime(created_after_param, is_end_of_day=False)
+        except ValueError:
+            return Response(
+                {"detail": f"Invalid created_after date or datetime: '{created_after_param}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if created_before_param is not None:
+        try:
+            parsed_before = parse_iso_datetime(created_before_param, is_end_of_day=True)
+        except ValueError:
+            return Response(
+                {"detail": f"Invalid created_before date or datetime: '{created_before_param}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if parsed_after is not None and parsed_before is not None:
+        if parsed_after > parsed_before:
+            return Response(
+                {"detail": "created_after cannot be later than created_before."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if parsed_after is not None:
+        queryset = queryset.filter(created_at__gte=parsed_after)
+    if parsed_before is not None:
+        queryset = queryset.filter(created_at__lte=parsed_before)
+
+    paginator = WebhookDeliveryCursorPagination()
+    page = paginator.paginate_queryset(queryset, request)
+    data = [_delivery_to_dict(d) for d in page]
+    return paginator.get_paginated_response(data)
+
+
+@extend_schema(
+    summary="Retrieve a webhook delivery",
+    description=(
+        "Returns details of a single webhook delivery attempt. "
+        "Returns 404 if the delivery does not belong to the authenticated merchant "
+        "and livemode, or does not exist."
+    ),
+    responses={
+        200: OpenApiResponse(
+            description="Webhook delivery detail.",
+            examples=[OpenApiExample("Detail response", value=_DELIVERY_DETAIL_EXAMPLE)],
+        ),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        404: OpenApiResponse(description="Delivery not found."),
+        429: OpenApiResponse(description="Rate limit exceeded."),
+    },
+    tags=["Webhook Deliveries"],
+)
+@api_view(["GET"])
+@permission_classes([HasAPIKey])
+@throttle_classes([PaymentReadRateThrottle])
+def webhook_delivery_detail(request, pk):
+    """Return a single webhook delivery scoped to the authenticated merchant."""
+    delivery = get_object_or_404(
+        WebhookDelivery.objects.select_related("payment"),
+        pk=pk,
+        payment__merchant=request.merchant,
+        payment__livemode=request.livemode,
+    )
+    return Response(_delivery_to_dict(delivery), status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    summary="Resend a webhook delivery",
+    description=(
+        "Re-queues a **failed** (dead-lettered) webhook delivery for a new delivery attempt. "
+        "The event_id, event_type, target_url and payload are preserved. "
+        "Attempt count is reset to 0.\n\n"
+        "- Returns **202** with `{\"id\": N, \"status\": \"pending\"}` when successfully queued.\n"
+        "- Returns **409** if the delivery is not in `failed` state.\n"
+        "- Returns **404** if the delivery does not belong to the authenticated merchant / livemode."
+    ),
+    request=None,
+    responses={
+        202: OpenApiResponse(
+            description="Delivery re-queued.",
+            examples=[OpenApiExample("Resend queued", value={"id": 7, "status": "pending"})],
+        ),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        404: OpenApiResponse(description="Delivery not found or belongs to another merchant."),
+        409: OpenApiResponse(
+            description="Delivery is not in failed state.",
+            examples=[OpenApiExample("Not failed", value={"detail": "Only failed deliveries can be resent."})],
+        ),
+        429: OpenApiResponse(description="Rate limit exceeded (webhook_resend bucket)."),
+    },
+    tags=["Webhook Deliveries"],
+)
+@api_view(["POST"])
+@permission_classes([HasAPIKey])
+@throttle_classes([WebhookResendThrottle])
+def webhook_delivery_resend(request, pk):
+    """Re-queue a failed webhook delivery."""
+    # 404 guard: must belong to the authenticated merchant and livemode
+    delivery = get_object_or_404(
+        WebhookDelivery.objects.select_related("payment"),
+        pk=pk,
+        payment__merchant=request.merchant,
+        payment__livemode=request.livemode,
+    )
+
+    result = resend_delivery(delivery.id)
+
+    if result == "queued":
+        # Refresh to get updated status from the service
+        delivery.refresh_from_db()
+        return Response(
+            {"id": delivery.id, "status": "pending"},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    # result == "not_failed"
+    return Response(
+        {"detail": "Only failed deliveries can be resent."},
+        status=status.HTTP_409_CONFLICT,
+    )
