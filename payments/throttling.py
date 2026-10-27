@@ -53,3 +53,30 @@ class PaymentReadRateThrottle(SimpleRateThrottle):
             "scope": self.scope,
             "ident": ident,
         }
+
+
+class WebhookResendThrottle(SimpleRateThrottle):
+    """
+    Limits the rate of webhook resend actions.
+    Separate bucket from reads (scope "webhook_resend").
+    Defaults to 10/minute via settings.WEBHOOK_RESEND_THROTTLE_RATE.
+    """
+    scope = "webhook_resend"
+
+    def get_rate(self):
+        if hasattr(settings, "WEBHOOK_RESEND_THROTTLE_RATE"):
+            return settings.WEBHOOK_RESEND_THROTTLE_RATE
+        return getattr(settings, "REST_FRAMEWORK", {}).get("DEFAULT_THROTTLE_RATES", {}).get(self.scope, "10/minute")
+
+    def get_cache_key(self, request, view):
+        merchant = getattr(request, "merchant", None)
+        if merchant:
+            livemode = getattr(request, "livemode", False)
+            ident = f"{merchant.id}:{'live' if livemode else 'test'}"
+        else:
+            ident = self.get_ident(request)
+
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": ident,
+        }
