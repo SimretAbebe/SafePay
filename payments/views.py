@@ -217,15 +217,16 @@ def list_payments(request):
 
 
 @api_view(["GET", "POST"])
-@permission_classes([HasAPIKey])
-@throttle_classes([PaymentReadRateThrottle, PaymentRateThrottle])
 def payments_dispatch(request, *args, **kwargs):
-    # DRF's Request wraps the original HttpRequest in request._request
-    original_request = getattr(request, "_request", request)
+    """
+    Router that delegates to list_payments (GET) or create_payment (POST).
+    Auth and throttling are handled by each sub-view so that they fire only
+    once and use the correct per-method throttle bucket.
+    """
     if request.method == "GET":
-        return list_payments(original_request, *args, **kwargs)
+        return list_payments(request._request, *args, **kwargs)
     elif request.method == "POST":
-        return create_payment(original_request, *args, **kwargs)
+        return create_payment(request._request, *args, **kwargs)
     return HttpResponseNotAllowed(["GET", "POST"])
 
 
