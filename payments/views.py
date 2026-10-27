@@ -200,14 +200,7 @@ def list_payments(request):
     return paginator.get_paginated_response(serializer.data)
 
 
-@csrf_exempt
-@extend_schema(
-    methods=['GET'],
-    summary='List payments',
-    description='Returns a cursor‑paginated list of payments for the authenticated merchant.',
-    responses={200: OpenApiResponse(description='Paginated list of payments.')},
-    tags=['Payments'],
-)
+
 @extend_schema(
     methods=['POST'],
     summary='Create a payment',
@@ -221,13 +214,19 @@ def list_payments(request):
     },
     tags=['Payments'],
 )
-@api_view(["GET", "POST"])
 
+
+@api_view(["GET", "POST"])
 def payments_dispatch(request, *args, **kwargs):
+    """
+    Router that delegates to list_payments (GET) or create_payment (POST).
+    Auth and throttling are handled by each sub-view so that they fire only
+    once and use the correct per-method throttle bucket.
+    """
     if request.method == "GET":
-        return list_payments(request, *args, **kwargs)
+        return list_payments(request._request, *args, **kwargs)
     elif request.method == "POST":
-        return create_payment(request, *args, **kwargs)
+        return create_payment(request._request, *args, **kwargs)
     return HttpResponseNotAllowed(["GET", "POST"])
 
 
