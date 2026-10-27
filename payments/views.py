@@ -221,6 +221,8 @@ def list_payments(request):
     },
     tags=['Payments'],
 )
+@api_view(["GET", "POST"])
+
 def payments_dispatch(request, *args, **kwargs):
     if request.method == "GET":
         return list_payments(request, *args, **kwargs)
@@ -669,6 +671,7 @@ _NON_CANCELLABLE_STATUSES = {"processing", "succeeded", "failed", "expired"}
         "Provider-backed payments cannot be cancelled through this endpoint (returns 409). "
         "Already-cancelled payments return 200 idempotently."
     ),
+    request=None,
     responses={
         200: OpenApiResponse(
             description="Payment cancelled (or was already cancelled).",
