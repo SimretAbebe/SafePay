@@ -92,6 +92,41 @@ def notify_status_change(payment):
     return webhook
 
 
+def resend_delivery(delivery_id: int) -> str:
+    """
+    Re-queue a failed WebhookDelivery for delivery.
+
+    Must be called outside an existing transaction (it opens its own).
+
+    Returns:
+        "not_failed" – the delivery was not in the "failed" (dead-letter) state;
+                       nothing was changed.
+        "queued"     – delivery was reset to pending and the task was queued
+                       via transaction.on_commit so it only fires after the
+                       DB row is durable.
+    """
+    with transaction.atomic():
+        try:
+            delivery = WebhookDelivery.objects.select_for_update().get(pk=delivery_id)
+        except WebhookDelivery.DoesNotExist:
+            return "not_failed"
+
+        if delivery.status != "failed":
+            return "not_failed"
+
+        # Reset to pending; preserve event_id, event_type, target_url, created_at, payload
+        delivery.status = "pending"
+        delivery.attempt_count = 0
+        delivery.last_error = ""
+        delivery.save(update_fields=["status", "attempt_count", "last_error", "updated_at"])
+
+        # Queue the task AFTER the transaction commits so the worker always
+        # sees the updated row.
+        transaction.on_commit(lambda: deliver_webhook_attempt.delay(delivery.id))
+
+    return "queued"
+
+
 def sync_payment_from_provider(payment_id) -> SyncResult:
     pk = getattr(payment_id, "pk", payment_id)
 

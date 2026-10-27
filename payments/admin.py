@@ -15,6 +15,7 @@ from .models import (
     ReviewQueuePayment,
     WebhookDelivery,
 )
+from .services import resend_delivery
 from .tasks import deliver_webhook_attempt, reconcile_payment
 from .webhook_secrets import derive_merchant_secret
 from .webhook_urls import validate_webhook_url
@@ -339,12 +340,9 @@ class PaymentAdmin(admin.ModelAdmin):
 def retry_webhook_deliveries(modeladmin, request, queryset):
     count = 0
     for delivery in queryset:
-        delivery.status = "pending"
-        delivery.attempt_count = 0
-        delivery.last_error = None
-        delivery.save(update_fields=["status", "attempt_count", "last_error", "updated_at"])
-        deliver_webhook_attempt.delay(delivery.id)
-        count += 1
+        result = resend_delivery(delivery.id)
+        if result == "queued":
+            count += 1
     modeladmin.message_user(request, f"{count} webhook delivery/deliveries queued for retry.")
 
 
