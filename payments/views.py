@@ -200,14 +200,7 @@ def list_payments(request):
     return paginator.get_paginated_response(serializer.data)
 
 
-@csrf_exempt
-@extend_schema(
-    methods=['GET'],
-    summary='List payments',
-    description='Returns a cursor‑paginated list of payments for the authenticated merchant.',
-    responses={200: OpenApiResponse(description='Paginated list of payments.')},
-    tags=['Payments'],
-)
+
 @extend_schema(
     methods=['POST'],
     summary='Create a payment',
@@ -221,13 +214,18 @@ def list_payments(request):
     },
     tags=['Payments'],
 )
-@api_view(["GET", "POST"])
 
+
+@api_view(["GET", "POST"])
+@permission_classes([HasAPIKey])
+@throttle_classes([PaymentReadRateThrottle, PaymentRateThrottle])
 def payments_dispatch(request, *args, **kwargs):
+    # DRF's Request wraps the original HttpRequest in request._request
+    original_request = getattr(request, "_request", request)
     if request.method == "GET":
-        return list_payments(request, *args, **kwargs)
+        return list_payments(original_request, *args, **kwargs)
     elif request.method == "POST":
-        return create_payment(request, *args, **kwargs)
+        return create_payment(original_request, *args, **kwargs)
     return HttpResponseNotAllowed(["GET", "POST"])
 
 
