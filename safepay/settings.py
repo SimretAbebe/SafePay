@@ -52,11 +52,13 @@ REST_FRAMEWORK = {
         'payments': '5/minute',
         'payment_reads': '120/minute',
         'webhook_resend': '10/minute',
+        'health': '120/minute',
         'anon': '10/minute',
     }
 }
 
 MIDDLEWARE = [
+    'payments.middleware.RequestIdMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -144,6 +146,13 @@ EXPIRY_GRACE_SECONDS = int(os.getenv("EXPIRY_GRACE_SECONDS", "900"))
 EXPIRY_SWEEP_SECONDS = int(os.getenv("EXPIRY_SWEEP_SECONDS", "60"))
 EXPIRY_BATCH_SIZE = int(os.getenv("EXPIRY_BATCH_SIZE", "50"))
 
+# Health & readiness configuration
+HEALTH_CACHE_SECONDS = int(os.getenv("HEALTH_CACHE_SECONDS", "5"))
+HEALTH_CHECK_TIMEOUT_SECONDS = int(os.getenv("HEALTH_CHECK_TIMEOUT_SECONDS", "2"))
+HEALTH_TOKEN = os.getenv("HEALTH_TOKEN", "")
+HEALTH_RECONCILE_STALE_SECONDS = int(os.getenv("HEALTH_RECONCILE_STALE_SECONDS", "300"))
+HEALTH_THROTTLE_RATE = os.getenv("HEALTH_THROTTLE_RATE", "120/minute")
+
 from celery.schedules import crontab
 
 CELERY_BEAT_SCHEDULE = {
@@ -180,6 +189,7 @@ if "test" in sys.argv:
     PAYMENT_THROTTLE_RATE = "10000/minute"
     PAYMENT_READ_THROTTLE_RATE = "10000/minute"
     WEBHOOK_RESEND_THROTTLE_RATE = "10000/minute"
+    HEALTH_THROTTLE_RATE = "10000/minute"
     ENABLE_FAKE_PROVIDER = True
     DEFAULT_PROVIDER = "fake"
     CACHES = {
@@ -262,6 +272,51 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Logging configuration
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {
+            "()": "payments.middleware.RequestIdFilter",
+        },
+    },
+    "formatters": {
+        "console": {
+            "format": "%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s",
+        },
+        "django.server": {
+            "()": "django.utils.log.ServerFormatter",
+            "format": "[{server_time}] [{request_id}] {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "filters": ["request_id"],
+            "formatter": "console",
+        },
+        "django.server": {
+            "class": "logging.StreamHandler",
+            "filters": ["request_id"],
+            "formatter": "django.server",
+        },
+    },
+    "loggers": {
+        "django.server": {
+            "handlers": ["django.server"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
+
 # ── API documentation ─────────────────────────────────────────────────
 API_DOCS_ENABLED = os.getenv(
     "API_DOCS_ENABLED",
@@ -330,6 +385,8 @@ SPECTACULAR_SETTINGS = {
     "EXCLUDE_PATH_REGEX": [
         r"^/admin/",
         r"^/api/webhooks/",
+        r"^/health/",
+        r"^/ready/",
     ],
     "TAGS": [
         {"name": "Checkout", "description": "Create and manage checkout sessions."},
