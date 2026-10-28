@@ -80,3 +80,21 @@ class WebhookResendThrottle(SimpleRateThrottle):
             "scope": self.scope,
             "ident": ident,
         }
+
+
+class HealthCheckThrottle(SimpleRateThrottle):
+    """
+    Limits the rate of health and readiness probe calls by IP address.
+    """
+    scope = "health"
+
+    def get_rate(self):
+        if hasattr(settings, "HEALTH_THROTTLE_RATE"):
+            return settings.HEALTH_THROTTLE_RATE
+        return getattr(settings, "REST_FRAMEWORK", {}).get("DEFAULT_THROTTLE_RATES", {}).get(self.scope, "120/minute")
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": self.get_ident(request),
+        }

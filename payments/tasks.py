@@ -8,6 +8,7 @@ import time
 import requests
 from celery import shared_task
 from django.conf import settings
+from django.core.cache import cache
 from django.db import models, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -196,6 +197,12 @@ def reconcile_pending_payments():
         except Exception:
             pass  # silently ignore — never raise or log the URL
 
+    # Record completion timestamp for the readiness health check
+    try:
+        cache.set("safepay:health:reconcile_sweep_ts", time.time(), timeout=86400)
+    except Exception:
+        pass
+
     return {"due_count": due_count, "dispatched_count": dispatched_count}
 
 
@@ -328,4 +335,3 @@ def review_queue_digest():
     lines.append(f"\n  Oldest item age: {oldest_age}")
 
     send_alert_message("\n".join(lines))
-
