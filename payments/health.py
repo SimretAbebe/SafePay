@@ -120,10 +120,17 @@ def readiness_check(request):
 
     if all_ok:
         sweep_status = _get_reconcile_sweep_status()
+        from . import breaker
+        from .providers.registry import PROVIDER_REGISTRY
+        providers_status = {
+            name: breaker.state(name, livemode=False)
+            for name in sorted(PROVIDER_REGISTRY.keys())
+        }
         body = {
             "status": "ready",
             "checks": checks,
             "jobs": {"reconcile_sweep": sweep_status},
+            "providers": providers_status,
         }
         status_code = 200
     else:
