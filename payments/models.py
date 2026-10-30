@@ -350,11 +350,13 @@ class ProviderAttempt(models.Model):
     OUTCOME_CREATED = "created"
     OUTCOME_FAILED_NOT_CREATED = "failed_not_created"
     OUTCOME_FAILED_UNKNOWN = "failed_unknown"
+    OUTCOME_SKIPPED_CIRCUIT_OPEN = "skipped_circuit_open"
 
     OUTCOME_CHOICES = [
         (OUTCOME_CREATED, "Created"),
         (OUTCOME_FAILED_NOT_CREATED, "Failed — Not Created"),
         (OUTCOME_FAILED_UNKNOWN, "Failed — Unknown"),
+        (OUTCOME_SKIPPED_CIRCUIT_OPEN, "Skipped — Circuit Open"),
     ]
 
     payment = models.ForeignKey(
