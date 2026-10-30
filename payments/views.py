@@ -548,11 +548,13 @@ def create_checkout_session(request):
         )
 
         if not routing_result.success:
-            # Attempts persist because transaction commits normally without unhandled exceptions
-            return Response(
+            resp = Response(
                 {"detail": "Payment provider unavailable. Retry with the same Idempotency-Key."},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+            if getattr(routing_result, "retry_after", None) is not None:
+                resp["Retry-After"] = str(routing_result.retry_after)
+            return resp
 
         locked_payment.provider = routing_result.provider_name
         locked_payment.provider_reference = routing_result.provider_reference
@@ -1302,4 +1304,4 @@ def webhook_delivery_resend(request, pk):
     return Response(
         {"detail": "Only failed deliveries can be resent."},
         status=status.HTTP_409_CONFLICT,
-    )
+    )

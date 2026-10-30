@@ -21,6 +21,7 @@ class RoutingResult:
     provider_name: Optional[str] = None
     provider_reference: Optional[str] = None
     checkout_url: Optional[str] = None
+    retry_after: Optional[int] = None
 
 
 def build_provider_chain(
@@ -31,19 +32,16 @@ def build_provider_chain(
     livemode: bool = False,
 ) -> list:
     """Build ordered list of provider candidates respecting fallback and safety rules."""
-    # Determine primary.
     primary = (
         requested_provider
         or (merchant.default_provider or None)
         or getattr(settings, "DEFAULT_PROVIDER", "chapa")
     )
 
-    # Check for a prior uncertain failure.
     uncertain_attempt = payment.provider_attempts.filter(
         outcome=ProviderAttempt.OUTCOME_FAILED_UNKNOWN
     ).first()
     if uncertain_attempt:
-        # Retry only the provider that had the uncertain failure.
         chain = [uncertain_attempt.provider]
     else:
         chain = [primary]
@@ -52,10 +50,8 @@ def build_provider_chain(
             fallbacks = list(merchant.fallback_providers or [])
             for name in fallbacks:
                 if name in chain:
-                    continue  # skip duplicates
+                    continue
                 if name not in _provider_registry:
-                    # Skip names not registered (safety: don't silently promote
-                    # an unregistered name).
                     continue
                 chain.append(name)
 
@@ -73,17 +69,31 @@ def build_provider_chain(
     return chain
 
 
-# ---------------------------------------------------------------------------
-# Checkout starter
-# ---------------------------------------------------------------------------
-
 def start_checkout(payment: Payment, customer: Optional[dict], chain: list) -> RoutingResult:
     """Attempt session initialization across provider chain; records ProviderAttempt for each."""
+    from . import breaker
+
+    skipped_retry_afters = []
+
     for provider_name in chain:
+        action = breaker.allow_request(provider_name, livemode=payment.livemode)
+        if action == "skip":
+            ProviderAttempt.objects.create(
+                payment=payment,
+                provider=provider_name,
+                outcome=ProviderAttempt.OUTCOME_SKIPPED_CIRCUIT_OPEN,
+                error_type="CircuitBreakerOpen",
+            )
+            skipped_retry_afters.append(breaker.retry_after(provider_name, livemode=payment.livemode))
+            logger.info(
+                "Checkout provider '%s' circuit open for payment %s; skipping",
+                provider_name, payment.pk,
+            )
+            continue
+
         try:
             provider = get_provider(provider_name)
         except ProviderError:
-            # Provider name is not in the registry — treat as not_created.
             ProviderAttempt.objects.create(
                 payment=payment,
                 provider=provider_name,
@@ -107,22 +117,24 @@ def start_checkout(payment: Payment, customer: Optional[dict], chain: list) -> R
                 error_type=type(exc).__name__,
             )
 
+            if getattr(exc, "infrastructure", False):
+                breaker.record_failure(provider_name, livemode=payment.livemode)
+
             if outcome == ProviderAttempt.OUTCOME_FAILED_UNKNOWN:
-                # Uncertain — stop immediately; do not try the next provider.
                 logger.warning(
                     "Checkout provider '%s' failed with uncertain outcome for payment %s",
                     provider_name, payment.pk,
                 )
-                return RoutingResult(success=False)
+                min_retry = min(skipped_retry_afters) if skipped_retry_afters else None
+                return RoutingResult(success=False, retry_after=min_retry)
 
-            # Failed but definitely not created — continue to next provider.
             logger.info(
                 "Checkout provider '%s' failed (not_created=True) for payment %s; trying next",
                 provider_name, payment.pk,
             )
             continue
 
-        # Success.
+        breaker.record_success(provider_name, livemode=payment.livemode)
         ProviderAttempt.objects.create(
             payment=payment,
             provider=provider_name,
@@ -136,5 +148,5 @@ def start_checkout(payment: Payment, customer: Optional[dict], chain: list) -> R
             checkout_url=init_result.checkout_url,
         )
 
-    # Chain exhausted without success.
-    return RoutingResult(success=False)
+    min_retry = min(skipped_retry_afters) if skipped_retry_afters else None
+    return RoutingResult(success=False, retry_after=min_retry)
