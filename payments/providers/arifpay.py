@@ -72,7 +72,7 @@ class ArifPayProvider(PaymentProvider):
         api_key = str(config.get("api_key", "")).strip().strip("'\"")
         if not api_key:
             # No key configured: request was never attempted.
-            raise ProviderError("ArifPay API key is not configured", not_created=True)
+            raise ProviderError("ArifPay API key is not configured", not_created=True, infrastructure=False)
         if api_key == self.SANDBOX_PORTAL_KEY:
             raise ProviderError(
                 "ARIFPAY_API_KEY is set to the sandbox portal simulator key "
@@ -81,6 +81,7 @@ class ArifPayProvider(PaymentProvider):
                 "checkout sessions. To use hosted checkout (production flow), set "
                 "ARIFPAY_API_KEY to a merchant API key from developer.arifpay.net.",
                 not_created=True,
+                infrastructure=False,
             )
         return api_key
 
@@ -163,44 +164,44 @@ class ArifPayProvider(PaymentProvider):
                 timeout=config["timeout"],
             )
         except requests.exceptions.ConnectTimeout as exc:
-            # Connect timeout: definitely not created
             raise ProviderError(
                 self._sanitize_error(f"ArifPay initialize connect timeout: {exc}", api_key),
                 not_created=True,
+                infrastructure=True,
             )
         except requests.exceptions.ConnectionError as exc:
-            # Connection failed: definitely not created
             raise ProviderError(
                 self._sanitize_error(f"ArifPay initialize connection error: {exc}", api_key),
                 not_created=True,
+                infrastructure=True,
             )
         except requests.exceptions.ReadTimeout as exc:
-            # Read timeout: uncertain
             raise ProviderError(
                 self._sanitize_error(f"ArifPay initialize read timeout: {exc}", api_key),
                 not_created=False,
+                infrastructure=True,
             )
         except requests.RequestException as exc:
-            # Network failure: uncertain
             raise ProviderError(
                 self._sanitize_error(f"ArifPay initialize request failed: {exc}", api_key),
                 not_created=False,
+                infrastructure=True,
             )
 
         try:
             data_json = response.json()
         except Exception:
-            # Malformed response: uncertain
+            is_infra = getattr(response, "status_code", 0) >= 500
             raise ProviderError(
                 self._sanitize_error(
                     f"ArifPay initialize returned non-JSON (status {response.status_code})",
                     api_key,
                 ),
                 not_created=False,
+                infrastructure=is_infra,
             )
 
         if response.status_code >= 400 and response.status_code < 500:
-            # HTTP 4xx: rejected by provider before session creation
             raw_msg = data_json.get("msg") if isinstance(data_json, dict) else None
             if raw_msg and "Test API Key" in str(raw_msg):
                 detail = (
@@ -213,34 +214,35 @@ class ArifPayProvider(PaymentProvider):
             raise ProviderError(
                 self._sanitize_error(f"ArifPay initialize failed: {detail}", api_key),
                 not_created=True,
+                infrastructure=False,
             )
 
         if response.status_code >= 500:
-            # HTTP 5xx: server error, session may exist — uncertain
             raw_msg = data_json.get("msg") if isinstance(data_json, dict) else None
             detail = raw_msg or f"HTTP {response.status_code}"
             raise ProviderError(
                 self._sanitize_error(f"ArifPay initialize failed: {detail}", api_key),
                 not_created=False,
+                infrastructure=True,
             )
 
         if data_json.get("error"):
-            # Application-level error on a 2xx: uncertain (treat as non-creation).
             raw_msg = data_json.get("msg") if isinstance(data_json, dict) else None
             detail = raw_msg or "application error"
             raise ProviderError(
                 self._sanitize_error(f"ArifPay initialize failed: {detail}", api_key),
                 not_created=False,
+                infrastructure=False,
             )
 
         data = data_json.get("data", {})
         session_id = data.get("sessionId")
         checkout_url = data.get("paymentUrl")
         if not session_id or not checkout_url:
-            # Missing required fields in a 2xx reply: uncertain.
             raise ProviderError(
                 "ArifPay initialize response missing sessionId or paymentUrl",
                 not_created=False,
+                infrastructure=False,
             )
 
         return InitResult(provider_reference=session_id, checkout_url=checkout_url)
@@ -449,6 +451,8 @@ class ArifPayProvider(PaymentProvider):
             cs = data_block["transaction"].get("checkoutSession")
             if isinstance(cs, dict):
                 provider_reference = cs.get("uuid") or str(cs.get("id", "")) or None
+            if not provider_reference:
+                provider_reference = data_block["transaction"].get("transactionId")
 
         if not provider_reference:
             raise ProviderError("ArifPay webhook missing sessionId/uuid")
