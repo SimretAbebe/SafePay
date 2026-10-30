@@ -19,7 +19,7 @@ from .base import (
 
 class FakeProvider(PaymentProvider):
     name: str = "fake"
-    supports_livemode: bool = False  # Fake provider must never be used in live mode
+    supports_livemode: bool = False
 
     STATUS_MAPPING: ClassVar[Dict[str, str]] = {
         "pending": "pending",
@@ -31,42 +31,41 @@ class FakeProvider(PaymentProvider):
 
     _store: ClassVar[Dict[str, Dict[str, Any]]] = {}
 
-    # Simulation error knobs for testing
     _force_error: ClassVar[bool] = False
     _force_error_not_created: ClassVar[bool] = False
+    _force_error_infrastructure: ClassVar[bool] = False
 
     @classmethod
     def reset(cls) -> None:
-        """Clear the in-memory storage and error knobs (useful between tests)."""
         cls._store.clear()
         cls._force_error = False
         cls._force_error_not_created = False
+        cls._force_error_infrastructure = False
 
     @classmethod
-    def set_error(cls, *, not_created: bool) -> None:
-        """Configure initialize() to raise ProviderError with the given not_created flag."""
+    def set_error(cls, *, not_created: bool = False, infrastructure: bool = False) -> None:
         cls._force_error = True
         cls._force_error_not_created = not_created
+        cls._force_error_infrastructure = infrastructure
 
     @classmethod
     def clear_error(cls) -> None:
-        """Remove any injected error; initialize() succeeds again."""
         cls._force_error = False
         cls._force_error_not_created = False
+        cls._force_error_infrastructure = False
 
     @classmethod
     def simulate(cls, reference: str, provider_status: str) -> None:
-        """Set the provider-side status for a given reference."""
         if reference not in cls._store:
             cls._store[reference] = {}
         cls._store[reference]["status"] = provider_status
 
     def initialize(self, payment: Any, customer: Optional[dict] = None) -> InitResult:
-        # The fake provider ignores any customer data; it is only for testing the interface.
         if self._force_error:
             raise ProviderError(
                 "FakeProvider forced error (test knob)",
                 not_created=self._force_error_not_created,
+                infrastructure=self._force_error_infrastructure,
             )
         ref = f"fake_{uuid.uuid4().hex}"
         checkout_url = f"https://fake.local/pay/{ref}"
