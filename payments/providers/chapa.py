@@ -8,6 +8,7 @@ import requests
 import requests.exceptions
 from django.conf import settings
 
+from payments.timing import provider_timer
 from .base import (
     InitResult,
     PaymentProvider,
@@ -98,12 +99,13 @@ class ChapaProvider(PaymentProvider):
         }
 
         try:
-            response = requests.post(
-                f"{config['base_url']}/transaction/initialize",
-                json=payload,
-                headers=headers,
-                timeout=config["timeout"],
-            )
+            with provider_timer():
+                response = requests.post(
+                    f"{config['base_url']}/transaction/initialize",
+                    json=payload,
+                    headers=headers,
+                    timeout=config["timeout"],
+                )
         except requests.exceptions.ConnectTimeout as e:
             raise ProviderError(
                 self._sanitize_error(f"Chapa initialize connect timeout: {type(e).__name__}", secret_key),
@@ -199,11 +201,12 @@ class ChapaProvider(PaymentProvider):
         }
 
         try:
-            response = requests.get(
-                url,
-                headers=headers,
-                timeout=config["timeout"],
-            )
+            with provider_timer():
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    timeout=config["timeout"],
+                )
         except requests.Timeout as e:
             raise ProviderError(self._sanitize_error(f"Chapa verify request timed out: {type(e).__name__}", secret_key))
         except requests.RequestException as e:
