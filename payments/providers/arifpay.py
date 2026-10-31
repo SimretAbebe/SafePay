@@ -8,6 +8,7 @@ import requests
 import requests.exceptions
 from django.conf import settings
 
+from payments.timing import provider_timer
 from .base import (
     InitResult,
     PaymentProvider,
@@ -157,12 +158,13 @@ class ArifPayProvider(PaymentProvider):
         headers = {"x-arifpay-key": api_key, "Content-Type": "application/json"}
 
         try:
-            response = requests.post(
-                f"{config['base_url']}/checkout/session",
-                json=payload,
-                headers=headers,
-                timeout=config["timeout"],
-            )
+            with provider_timer():
+                response = requests.post(
+                    f"{config['base_url']}/checkout/session",
+                    json=payload,
+                    headers=headers,
+                    timeout=config["timeout"],
+                )
         except requests.exceptions.ConnectTimeout as exc:
             raise ProviderError(
                 self._sanitize_error(f"ArifPay initialize connect timeout: {exc}", api_key),
@@ -360,7 +362,8 @@ class ArifPayProvider(PaymentProvider):
         url = f"{config['base_url']}/checkout/session/{provider_reference}"
         headers = {"x-arifpay-key": api_key}
         try:
-            response = requests.get(url, headers=headers, timeout=config["timeout"])
+            with provider_timer():
+                response = requests.get(url, headers=headers, timeout=config["timeout"])
         except requests.RequestException as exc:
             raise ProviderError(
                 self._sanitize_error(f"ArifPay verify request failed: {exc}", api_key)
