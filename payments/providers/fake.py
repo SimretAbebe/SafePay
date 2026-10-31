@@ -1,7 +1,10 @@
 import hashlib
 import hmac
 import json
+import os
+import time
 import uuid
+from payments.timing import provider_timer
 from typing import Any, ClassVar, Dict, Optional
 
 from django.conf import settings
@@ -61,23 +64,27 @@ class FakeProvider(PaymentProvider):
         cls._store[reference]["status"] = provider_status
 
     def initialize(self, payment: Any, customer: Optional[dict] = None) -> InitResult:
-        if self._force_error:
-            raise ProviderError(
-                "FakeProvider forced error (test knob)",
-                not_created=self._force_error_not_created,
-                infrastructure=self._force_error_infrastructure,
+        with provider_timer():
+            delay_ms = getattr(settings, 'FAKE_PROVIDER_DELAY_MS', 0)
+            if delay_ms > 0:
+                time.sleep(delay_ms / 1000.0)
+            if self._force_error:
+                raise ProviderError(
+                    "FakeProvider forced error (test knob)",
+                    not_created=self._force_error_not_created,
+                    infrastructure=self._force_error_infrastructure,
+                )
+            ref = f"fake_{uuid.uuid4().hex}"
+            checkout_url = f"https://fake.local/pay/{ref}"
+            self._store[ref] = {
+                "status": "pending",
+                "payment_id": getattr(payment, "id", None),
+                "customer": customer,
+            }
+            return InitResult(
+                provider_reference=ref,
+                checkout_url=checkout_url,
             )
-        ref = f"fake_{uuid.uuid4().hex}"
-        checkout_url = f"https://fake.local/pay/{ref}"
-        self._store[ref] = {
-            "status": "pending",
-            "payment_id": getattr(payment, "id", None),
-            "customer": customer,
-        }
-        return InitResult(
-            provider_reference=ref,
-            checkout_url=checkout_url,
-        )
 
     def map_status(self, provider_status: str) -> str:
         if provider_status in ("refunded", "reversed"):
@@ -90,18 +97,22 @@ class FakeProvider(PaymentProvider):
         return validate_safepay_status(safepay_status)
 
     def verify(self, provider_reference: str) -> ProviderStatusResult:
-        record = self._store.get(provider_reference)
-        if record is None:
-            raise ProviderError(
-                f"Fake payment with reference '{provider_reference}' not found."
+        with provider_timer():
+            delay_ms = getattr(settings, 'FAKE_PROVIDER_DELAY_MS', 0)
+            if delay_ms > 0:
+                time.sleep(delay_ms / 1000.0)
+            record = self._store.get(provider_reference)
+            if record is None:
+                raise ProviderError(
+                    f"Fake payment with reference '{provider_reference}' not found."
+                )
+            provider_status = record.get("status", "pending")
+            safepay_status = self.map_status(provider_status)
+            return ProviderStatusResult(
+                provider_reference=provider_reference,
+                status=safepay_status,
+                raw={"status": provider_status, "reference": provider_reference},
             )
-        provider_status = record.get("status", "pending")
-        safepay_status = self.map_status(provider_status)
-        return ProviderStatusResult(
-            provider_reference=provider_reference,
-            status=safepay_status,
-            raw={"status": provider_status, "reference": provider_reference},
-        )
 
     def cancel(self, provider_reference: str) -> ProviderStatusResult:
         if not getattr(self, "supports_cancel", True):
