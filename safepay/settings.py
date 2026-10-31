@@ -59,6 +59,7 @@ REST_FRAMEWORK = {
 
 MIDDLEWARE = [
     'payments.middleware.RequestIdMiddleware',
+    'payments.timing.ServerTimingMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -98,8 +99,9 @@ WEBHOOK_TARGET_URL = os.getenv("WEBHOOK_TARGET_URL", "https://webhook.site/your-
 ALLOW_PRIVATE_WEBHOOK_TARGETS = True
 SAFE_PAY_API_KEY = os.getenv("SAFE_PAY_API_KEY", "dev-api-key-change-me")
 ENABLE_FAKE_PROVIDER = os.getenv("ENABLE_FAKE_PROVIDER", "True").strip().lower() in ("true", "1")
+FAKE_PROVIDER_DELAY_MS = int(os.getenv("FAKE_PROVIDER_DELAY_MS", "300"))
 LIVE_MODE_AVAILABLE = os.getenv("LIVE_MODE_AVAILABLE", "True").strip().lower() in ("true", "1")
-DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "fake").strip()
+DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "fake").strip()  # default: fake
 FAKE_PROVIDER_SECRET = os.getenv("FAKE_PROVIDER_SECRET", "fake-secret-for-tests")
 
 CHAPA_SECRET_KEY = os.getenv("CHAPA_SECRET_KEY", "")
@@ -160,6 +162,13 @@ BREAKER_WINDOW_SECONDS = int(os.getenv("BREAKER_WINDOW_SECONDS", "60"))
 BREAKER_COOLDOWN_SECONDS = int(os.getenv("BREAKER_COOLDOWN_SECONDS", "60"))
 BREAKER_MAX_COOLDOWN_SECONDS = int(os.getenv("BREAKER_MAX_COOLDOWN_SECONDS", "600"))
 BREAKER_PROBE_TTL_SECONDS = int(os.getenv("BREAKER_PROBE_TTL_SECONDS", "30"))
+
+# Server-Timing and slow request configuration
+SERVER_TIMING_ENABLED = os.getenv(
+    "SERVER_TIMING_ENABLED",
+    "True",
+).strip().lower() in ("true", "1")
+SLOW_REQUEST_MS = int(os.getenv("SLOW_REQUEST_MS", "800"))
 
 from celery.schedules import crontab
 
@@ -318,6 +327,11 @@ LOGGING = {
             "propagate": False,
         },
         "django.request": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "safepay.slow": {
             "handlers": ["console"],
             "level": "WARNING",
             "propagate": False,
