@@ -13,11 +13,13 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import CursorPagination
+from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
 
+from .http_cache import etag_matches, make_etag
 from .models import InboundWebhookEvent, Payment, WebhookDelivery
 from .permissions import HasAPIKey
 from .providers import (
@@ -582,15 +584,41 @@ def create_checkout_session(request):
 @extend_schema(
     summary="Retrieve a payment",
     description="Returns full details of a single payment by its ID, scoped to the authenticated merchant.",
+    parameters=[
+        OpenApiParameter(
+            name="If-None-Match",
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.HEADER,
+            required=False,
+            description="ETag from a previous response to allow conditional GET (304 Not Modified).",
+        ),
+        OpenApiParameter(
+            name="ETag",
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.HEADER,
+            description="Strong entity tag representing the payment resource state.",
+            response=[200, 304],
+        ),
+        OpenApiParameter(
+            name="Cache-Control",
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.HEADER,
+            description="Caching directives (private, no-cache).",
+            response=[200, 304],
+        ),
+    ],
     responses={
         200: OpenApiResponse(response=PaymentSerializer, description="Payment details."),
+        304: OpenApiResponse(description="Payment not modified (conditional GET match)."),
         403: OpenApiResponse(description="Invalid or missing API key."),
         404: OpenApiResponse(description="Payment not found."),
+        429: OpenApiResponse(description="Rate limit exceeded."),
     },
     tags=["Payments"],
 )
 @api_view(["GET"])
 @permission_classes([HasAPIKey])
+@throttle_classes([PaymentReadRateThrottle])
 def payment_detail(request, pk):
     payment = get_object_or_404(
         Payment,
@@ -598,9 +626,21 @@ def payment_detail(request, pk):
         merchant=request.merchant,
         livemode=getattr(request, "livemode", False),
     )
+    serializer_data = PaymentSerializer(payment).data
+    body_bytes = JSONRenderer().render(serializer_data)
+    etag = make_etag(body_bytes)
+
+    if_none_match = request.headers.get("If-None-Match") or request.META.get("HTTP_IF_NONE_MATCH")
+    if etag_matches(if_none_match, etag):
+        return Response(
+            status=status.HTTP_304_NOT_MODIFIED,
+            headers={"ETag": etag, "Cache-Control": "private, no-cache"},
+        )
+
     return Response(
-        PaymentSerializer(payment).data,
+        serializer_data,
         status=status.HTTP_200_OK,
+        headers={"ETag": etag, "Cache-Control": "private, no-cache"},
     )
 
 
