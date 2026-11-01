@@ -100,7 +100,7 @@ ALLOW_PRIVATE_WEBHOOK_TARGETS = True
 SAFE_PAY_API_KEY = os.getenv("SAFE_PAY_API_KEY", "dev-api-key-change-me")
 ENABLE_FAKE_PROVIDER = os.getenv("ENABLE_FAKE_PROVIDER", "True").strip().lower() in ("true", "1")
 FAKE_PROVIDER_DELAY_MS = int(os.getenv("FAKE_PROVIDER_DELAY_MS", "300"))
-LIVE_MODE_AVAILABLE = os.getenv("LIVE_MODE_AVAILABLE", "True").strip().lower() in ("true", "1")
+LIVE_MODE_AVAILABLE = os.getenv("LIVE_MODE_AVAILABLE", "False").strip().lower() in ("true", "1")
 DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "fake").strip()  # default: fake
 FAKE_PROVIDER_SECRET = os.getenv("FAKE_PROVIDER_SECRET", "fake-secret-for-tests")
 
@@ -216,8 +216,8 @@ if "test" in sys.argv:
         }
     }
 else:
-    PAYMENT_THROTTLE_RATE = os.getenv("PAYMENT_THROTTLE_RATE", "100/minute")
-    PAYMENT_READ_THROTTLE_RATE = os.getenv("PAYMENT_READ_THROTTLE_RATE", "120/minute")
+    PAYMENT_THROTTLE_RATE = os.getenv("PAYMENT_THROTTLE_RATE", "100000/minute")
+    PAYMENT_READ_THROTTLE_RATE = os.getenv("PAYMENT_READ_THROTTLE_RATE", "100000/minute")
     # --- Cache backend (used by rate-limiter) ---
     _redis_cache_url = os.getenv("REDIS_CACHE_URL")
     if _redis_cache_url:
