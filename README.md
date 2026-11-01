@@ -141,3 +141,34 @@ docker compose exec web python manage.py test
 
 ---
 
+## Benchmarking
+
+The `bench` management command measures API latency percentiles against a **local dev server** using the fake provider only.
+
+### 1. Start the server
+
+```bash
+PAYMENT_THROTTLE_RATE=10000/minute \
+PAYMENT_READ_THROTTLE_RATE=10000/minute \
+ENABLE_FAKE_PROVIDER=True \
+DEFAULT_PROVIDER=fake \
+LIVE_MODE_AVAILABLE=False \
+python manage.py runserver 127.0.0.1:8000
+```
+
+### 2. Run the benchmark (in a second terminal)
+
+```bash
+python manage.py bench --requests 300 --concurrency 8 --scenario all
+```
+
+Optional flags:
+- `--base-url http://127.0.0.1:8000` (default)
+- `--warmup 20` warm-up requests excluded from stats
+- `--json results.json` write results to JSON
+- `--budget-p95-ms 500` exit 1 if any scenario p95 exceeds 500 ms
+
+> Numbers are from this machine, the dev server, a local database and a fake provider; they show relative behavior, not production capacity.
+
+---
+
