@@ -58,6 +58,7 @@ REST_FRAMEWORK = {
 }
 
 MIDDLEWARE = [
+    'payments.middleware.ServerTimingMiddleware',
     'payments.middleware.RequestIdMiddleware',
     'payments.timing.ServerTimingMiddleware',
     'django.middleware.security.SecurityMiddleware',
@@ -100,7 +101,7 @@ ALLOW_PRIVATE_WEBHOOK_TARGETS = True
 SAFE_PAY_API_KEY = os.getenv("SAFE_PAY_API_KEY", "dev-api-key-change-me")
 ENABLE_FAKE_PROVIDER = os.getenv("ENABLE_FAKE_PROVIDER", "True").strip().lower() in ("true", "1")
 FAKE_PROVIDER_DELAY_MS = int(os.getenv("FAKE_PROVIDER_DELAY_MS", "300"))
-LIVE_MODE_AVAILABLE = os.getenv("LIVE_MODE_AVAILABLE", "False").strip().lower() in ("true", "1")
+LIVE_MODE_AVAILABLE = os.getenv("LIVE_MODE_AVAILABLE", "True").strip().lower() in ("true", "1")
 DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "fake").strip()  # default: fake
 FAKE_PROVIDER_SECRET = os.getenv("FAKE_PROVIDER_SECRET", "fake-secret-for-tests")
 
@@ -168,6 +169,7 @@ SERVER_TIMING_ENABLED = os.getenv(
     "SERVER_TIMING_ENABLED",
     "True",
 ).strip().lower() in ("true", "1")
+SERVER_TIMING_DETAILED = os.getenv("SERVER_TIMING_DETAILED", "False").strip().lower() in ("true", "1")
 SLOW_REQUEST_MS = int(os.getenv("SLOW_REQUEST_MS", "800"))
 
 from celery.schedules import crontab
@@ -209,6 +211,7 @@ if "test" in sys.argv:
     HEALTH_THROTTLE_RATE = "10000/minute"
     ENABLE_FAKE_PROVIDER = True
     DEFAULT_PROVIDER = "fake"
+    LIVE_MODE_AVAILABLE = True
     CACHES = {
         "default": {
             "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
