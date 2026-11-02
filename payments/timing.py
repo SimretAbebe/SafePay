@@ -104,8 +104,8 @@ class ServerTimingMiddleware:
                 round(provider_ms, 1),
             )
 
-        # Server-Timing header
-        if getattr(settings, "SERVER_TIMING_ENABLED", False):
+        # Server-Timing header (detailed breakdown when SERVER_TIMING_DETAILED is True)
+        if getattr(settings, "SERVER_TIMING_ENABLED", False) and getattr(settings, "SERVER_TIMING_DETAILED", False):
             parts = [
                 f'db;dur={round(db_ms, 1)};desc="{timer.db_queries} queries"',
             ]
