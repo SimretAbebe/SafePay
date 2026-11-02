@@ -36,6 +36,7 @@ class FakeClock:
 
 @override_settings(
     SERVER_TIMING_ENABLED=True,
+    SERVER_TIMING_DETAILED=True,
     SLOW_REQUEST_MS=800,
     ENABLE_FAKE_PROVIDER=True,
     DEFAULT_PROVIDER="fake",
