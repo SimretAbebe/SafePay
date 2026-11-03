@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from payments.test_utils import create_test_merchant
 
 
+@override_settings(CHAPA_WEBHOOK_SECRET="test-chapa-webhook-secret")
 class ServerTimingHeaderTests(TestCase):
     """Verify Server-Timing response header behavior and format."""
 
@@ -59,7 +60,7 @@ class ServerTimingHeaderTests(TestCase):
         match_404 = re.match(r"^app;dur=(\d+(\.\d+)?)$", resp_404.headers["Server-Timing"])
         self.assertIsNotNone(match_404, f"404 missing valid Server-Timing: {resp_404.headers.get('Server-Timing')}")
 
-    @override_settings(SERVER_TIMING_ENABLED=False)
+    @override_settings(SERVER_TIMING_ENABLED=False, CHAPA_WEBHOOK_SECRET="test-chapa-webhook-secret")
     def test_server_timing_disabled_omits_header(self):
         """4: With SERVER_TIMING_ENABLED=False, the Server-Timing header is absent."""
         resp_200 = self.client.get("/health/")
