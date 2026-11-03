@@ -166,6 +166,8 @@ class Payment(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def transition_to(self, new_status):
+        from django.db import transaction
+
         allowed_next_statuses = self.VALID_TRANSITIONS.get(self.status, [])
 
         if new_status not in allowed_next_statuses:
@@ -175,15 +177,20 @@ class Payment(models.Model):
                 f"states from '{self.status}': {allowed_next_statuses or 'none (terminal state)'}"
             )
 
-        old_status = self.status
-        self.status = new_status
-        self.save(update_fields=["status", "updated_at"])
+        with transaction.atomic():
+            old_status = self.status
+            self.status = new_status
+            self.save(update_fields=["status", "updated_at"])
 
-        PaymentStatusHistory.objects.create(
-            payment=self,
-            from_status=old_status,
-            to_status=new_status,
-        )
+            PaymentStatusHistory.objects.create(
+                payment=self,
+                from_status=old_status,
+                to_status=new_status,
+            )
+
+            if new_status == "succeeded":
+                from payments.ledger.services import post_payment_succeeded
+                post_payment_succeeded(self)
 
     def flag_for_review(self, reason, now=None):
         """Set needs_review=True with timestamps. Only sets needs_review_at

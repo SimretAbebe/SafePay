@@ -486,3 +486,77 @@ class ReviewQueuePaymentAdmin(admin.ModelAdmin):
             next_sync_at=now,
         )
         self.message_user(request, f"{count} payment(s) review flag cleared and queued for check.", level=messages.SUCCESS)
+
+
+# ---------------------------------------------------------------------------
+# Ledger admin (fully read-only: no add, change, or delete)
+# ---------------------------------------------------------------------------
+
+from .ledger.models import LedgerAccount, LedgerEntry, LedgerJournal
+
+
+class LedgerEntryInline(admin.TabularInline):
+    model = LedgerEntry
+    readonly_fields = ("account", "side", "amount", "created_at")
+    extra = 0
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(LedgerAccount)
+class LedgerAccountAdmin(admin.ModelAdmin):
+    list_display = ("id", "merchant", "livemode", "code", "currency", "created_at")
+    list_filter = ("livemode", "currency", "merchant")
+    search_fields = ("code",)
+    readonly_fields = ("merchant", "livemode", "code", "currency", "created_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(LedgerJournal)
+class LedgerJournalAdmin(admin.ModelAdmin):
+    list_display = ("id", "payment", "kind", "created_at")
+    list_filter = ("kind",)
+    search_fields = ("payment__idempotency_key",)
+    readonly_fields = ("payment", "kind", "created_at")
+    inlines = [LedgerEntryInline]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(LedgerEntry)
+class LedgerEntryAdmin(admin.ModelAdmin):
+    list_display = ("id", "journal", "account", "side", "amount", "created_at")
+    list_filter = ("side",)
+    readonly_fields = ("journal", "account", "side", "amount", "created_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
