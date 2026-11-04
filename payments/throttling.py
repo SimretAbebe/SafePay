@@ -98,3 +98,31 @@ class HealthCheckThrottle(SimpleRateThrottle):
             "scope": self.scope,
             "ident": self.get_ident(request),
         }
+
+
+class LedgerExportRateThrottle(SimpleRateThrottle):
+    """
+    Limits the rate of ledger CSV export calls.
+    Throttles by merchant id and mode when present, otherwise falls back to IP address.
+    Separate bucket from reads (scope "ledger_export").
+    Defaults to 10/minute via settings.LEDGER_EXPORT_THROTTLE_RATE.
+    """
+    scope = "ledger_export"
+
+    def get_rate(self):
+        if hasattr(settings, "LEDGER_EXPORT_THROTTLE_RATE"):
+            return settings.LEDGER_EXPORT_THROTTLE_RATE
+        return getattr(settings, "REST_FRAMEWORK", {}).get("DEFAULT_THROTTLE_RATES", {}).get(self.scope, "10/minute")
+
+    def get_cache_key(self, request, view):
+        merchant = getattr(request, "merchant", None)
+        if merchant:
+            livemode = getattr(request, "livemode", False)
+            ident = f"{merchant.id}:{'live' if livemode else 'test'}"
+        else:
+            ident = self.get_ident(request)
+
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": ident,
+        }
