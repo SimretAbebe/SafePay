@@ -54,6 +54,7 @@ REST_FRAMEWORK = {
         'webhook_resend': '10/minute',
         'health': '120/minute',
         'anon': '10/minute',
+        'ledger_export': '10/minute',
     }
 }
 
@@ -99,7 +100,7 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "dev-secret-change-me")
 WEBHOOK_TARGET_URL = os.getenv("WEBHOOK_TARGET_URL", "https://webhook.site/your-unique-id")
 ALLOW_PRIVATE_WEBHOOK_TARGETS = True
 SAFE_PAY_API_KEY = os.getenv("SAFE_PAY_API_KEY", "dev-api-key-change-me")
-ENABLE_FAKE_PROVIDER = os.getenv("ENABLE_FAKE_PROVIDER", "True").strip().lower() in ("true", "1")
+ENABLE_FAKE_PROVIDER = True
 FAKE_PROVIDER_DELAY_MS = int(os.getenv("FAKE_PROVIDER_DELAY_MS", "300"))
 LIVE_MODE_AVAILABLE = os.getenv("LIVE_MODE_AVAILABLE", "True").strip().lower() in ("true", "1")
 DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "fake").strip()  # default: fake
@@ -209,6 +210,7 @@ if "test" in sys.argv:
     PAYMENT_READ_THROTTLE_RATE = "10000/minute"
     WEBHOOK_RESEND_THROTTLE_RATE = "10000/minute"
     HEALTH_THROTTLE_RATE = "10000/minute"
+    LEDGER_EXPORT_THROTTLE_RATE = "10000/minute"
     ENABLE_FAKE_PROVIDER = True
     DEFAULT_PROVIDER = "fake"
     LIVE_MODE_AVAILABLE = True
@@ -221,6 +223,7 @@ if "test" in sys.argv:
 else:
     PAYMENT_THROTTLE_RATE = os.getenv("PAYMENT_THROTTLE_RATE", "100000/minute")
     PAYMENT_READ_THROTTLE_RATE = os.getenv("PAYMENT_READ_THROTTLE_RATE", "100000/minute")
+    LEDGER_EXPORT_THROTTLE_RATE = os.getenv("LEDGER_EXPORT_THROTTLE_RATE", "10/minute")
     # --- Cache backend (used by rate-limiter) ---
     _redis_cache_url = os.getenv("REDIS_CACHE_URL")
     if _redis_cache_url:
@@ -416,5 +419,6 @@ SPECTACULAR_SETTINGS = {
     "TAGS": [
         {"name": "Checkout", "description": "Create and manage checkout sessions."},
         {"name": "Payments", "description": "Query, verify, and cancel payments."},
+        {"name": "Ledger", "description": "Inspect ledger balances, entries, and exports."},
     ],
 }
