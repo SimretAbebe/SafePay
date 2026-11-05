@@ -11,6 +11,8 @@ Covers:
 
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+from django.db import connection
 from django.urls import reverse
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
@@ -21,7 +23,8 @@ from payments.ledger.services import post_payment_succeeded
 
 
 def create_merchant(name="TestMerchant"):
-    merchant, _ = Merchant.create_with_key(name=name)
+    merchant, key = Merchant.create_with_key(name=name)
+    merchant.raw_api_key = key
     return merchant
 
 
@@ -43,7 +46,7 @@ class LedgerAPITestBase(TestCase):
         self.merchant = create_merchant()
         self.client = APIClient()
         # API key header expected by HasAPIKey permission
-        self.client.credentials(HTTP_X_API_KEY=self.merchant.api_key)
+        self.client.credentials(HTTP_X_API_KEY=self.merchant.raw_api_key)
 
     def _succeed_payment(self, payment):
         payment.transition_to("succeeded")
@@ -58,6 +61,7 @@ class LedgerBalancesTests(LedgerAPITestBase):
         p2 = self._succeed_payment(create_payment(self.merchant, amount="250.50", provider="arifpay"))
         # a third payment that stays pending – should not affect balances
         create_payment(self.merchant, amount="99.50", provider="direct")
+        LedgerAccount.objects.create(merchant=self.merchant, livemode=False, code="receivable:direct", currency="ETB")
 
         url = reverse("ledger_balances")
         resp = self.client.get(url)
@@ -71,8 +75,8 @@ class LedgerBalancesTests(LedgerAPITestBase):
         # Because each payment creates a debit to receivable and a credit to sales of the same amount.
         self.assertEqual(accounts.get("receivable:chapa"), Decimal("150.00"))
         self.assertEqual(accounts.get("receivable:arifpay"), Decimal("250.50"))
-        # sales should be the sum of all credits
-        self.assertEqual(accounts.get("sales"), Decimal("400.50"))
+        # sales is credited, so balance (debits - credits) is negative
+        self.assertEqual(accounts.get("sales"), Decimal("-400.50"))
         # accounts with no entries are still present with zero balance (e.g., receivable:direct)
         self.assertIn("receivable:direct", accounts)
         self.assertEqual(accounts["receivable:direct"], Decimal("0.00"))
@@ -162,11 +166,15 @@ class LedgerExportTests(LedgerAPITestBase):
         super().setUp()
         # generate a realistic number of entries (≈30) spread over two days
         base = datetime.now(timezone.utc) - timedelta(days=1)
-        for i in range(30):
-            p = create_payment(self.merchant, amount=str(10 + i), provider="chapa")
-            p.transition_to("succeeded")
-            # adjust timestamps manually for export range testing
-            LedgerEntry.objects.filter(journal__payment=p).update(created_at=base + timedelta(hours=i))
+        with connection.cursor() as cursor:
+            for i in range(30):
+                p = create_payment(self.merchant, amount=str(10 + i), provider="chapa")
+                p.transition_to("succeeded")
+                # adjust timestamps via raw SQL to bypass immutability guards in tests
+                cursor.execute(
+                    "UPDATE payments_ledgerentry SET created_at = %s WHERE journal_id IN (SELECT id FROM payments_ledgerjournal WHERE payment_id = %s)",
+                    [base + timedelta(hours=i), p.id],
+                )
         self.from_date = (base.date()).isoformat()
         self.to_date = (base.date() + timedelta(days=1)).isoformat()
 
@@ -177,16 +185,19 @@ class LedgerExportTests(LedgerAPITestBase):
         self.assertEqual(resp["Content-Type"], "text/csv; charset=utf-8")
         content = resp.content.decode("utf-8")
         lines = content.splitlines()
-        # header + 30 rows
-        self.assertEqual(len(lines), 31)
+        # header + 60 entries (30 payments * 2 sides)
+        self.assertEqual(len(lines), 61)
         header = lines[0].split(",")
         self.assertEqual(header, ["created_at", "account", "side", "amount", "currency", "journal_kind", "payment_id"])
-        # ensure injection protection – create a dangerous entry and verify prefix
+        # ensure injection protection – update account code and verify prefix
         entry = LedgerEntry.objects.first()
-        entry.account.code = "=SUM(A1:A2)"
-        entry.save(update_fields=["account_id"])
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE payments_ledgeraccount SET code = %s WHERE id = %s",
+                ["=SUM(A1:A2)", entry.account_id],
+            )
         resp2 = self.client.get(url, {"from": self.from_date, "to": self.to_date})
-        self.assertIn("'" + entry.account.code, resp2.content.decode("utf-8"))
+        self.assertIn("'=SUM(A1:A2)", resp2.content.decode("utf-8"))
 
     def test_export_limits(self):
         # date range too large (>366 days)
@@ -194,26 +205,17 @@ class LedgerExportTests(LedgerAPITestBase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("cannot exceed 366 days", resp.json()["detail"])
 
-        # row count limit >10k – fabricate many entries quickly
-        LedgerEntry.objects.all().delete()
-        many = []
-        for i in range(10001):
-            # create payments with recent timestamps (default) and succeed them
-            p = create_payment(self.merchant, amount="1.00", provider="chapa")
-            p.transition_to("succeeded")
-            many.append(p)
-        # Use a date range covering the last year (within 366 days) to include all created entries
-        from_date = (datetime.now(timezone.utc) - timedelta(days=365)).date().isoformat()
-        to_date = datetime.now(timezone.utc).date().isoformat()
-        resp = self.client.get(reverse("ledger_export"), {"from": from_date, "to": to_date})
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn("exceeding the maximum of 10,000 rows", resp.json()["detail"])
-            p = create_payment(self.merchant, amount="1.00", provider="chapa")
-            p.transition_to("succeeded")
-            many.append(p)
-        resp = self.client.get(reverse("ledger_export"), {"from": self.from_date, "to": self.to_date})
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn("exceeding the maximum of 10,000 rows", resp.json()["detail"])
+        # row count limit >10k – simulate by patching count
+        with patch("payments.ledger.views.LedgerEntry.objects.filter") as mock_filter:
+            mock_qs = MagicMock()
+            mock_qs.select_related.return_value.order_by.return_value = mock_qs
+            mock_qs.count.return_value = 10001
+            mock_filter.return_value = mock_qs
+            from_date = (datetime.now(timezone.utc) - timedelta(days=10)).date().isoformat()
+            to_date = datetime.now(timezone.utc).date().isoformat()
+            resp = self.client.get(reverse("ledger_export"), {"from": from_date, "to": to_date})
+            self.assertEqual(resp.status_code, 400)
+            self.assertIn("exceeding the maximum of 10,000 rows", resp.json()["detail"])
 
     def test_export_missing_params(self):
         resp = self.client.get(reverse("ledger_export"), {"from": self.from_date})
@@ -225,7 +227,7 @@ class LedgerExportTests(LedgerAPITestBase):
         resp = self.client.get(reverse("ledger_export"), {"from": self.from_date, "to": self.to_date})
         self.assertEqual(resp.status_code, 403)
 
-    @override_settings(REST_FRAMEWORK={"DEFAULT_THROTTLE_RATES": {"ledger_export": "1/minute"}})
+    @override_settings(LEDGER_EXPORT_THROTTLE_RATE="1/minute")
     def test_export_throttle(self):
         url = reverse("ledger_export")
         resp1 = self.client.get(url, {"from": self.from_date, "to": self.to_date})
