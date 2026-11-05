@@ -44,13 +44,15 @@ class SyncResult:
         raise KeyError(item)
 
 
-def notify_status_change(payment):
+def _create_delivery_and_outbox(payment):
+    """
+    Creates WebhookDelivery and WebhookOutbox in the current transaction.
+    Must be called inside transaction.atomic().
+    Does NOT call .delay – dispatch happens through the sweeper.
+    """
     event_type = STATUS_TO_EVENT_TYPE.get(payment.status)
     if not event_type:
-        raise ValueError(
-            f"Unsupported payment status '{payment.status}' for webhook notification. "
-            f"Allowed statuses: {list(STATUS_TO_EVENT_TYPE.keys())}"
-        )
+        return None
 
     if payment.merchant is None:
         target_url = settings.WEBHOOK_TARGET_URL
@@ -68,27 +70,50 @@ def notify_status_change(payment):
             )
             return None
 
-    event_id = uuid.uuid4()
-    payload = {
-        "id": str(event_id),
-        "type": event_type,
-        "livemode": payment.livemode,
-        "data": {
-            "payment_id": payment.id,
-            "idempotency_key": payment.idempotency_key,
-            "status": payment.status,
-            "amount": str(payment.amount),
-        },
-    }
+    # Dedup: check if a delivery already exists for this payment and event_type
+    webhook = WebhookDelivery.objects.filter(payment=payment, event_type=event_type).first()
+    if not webhook:
+        event_id = uuid.uuid4()
+        payload = {
+            "id": str(event_id),
+            "type": event_type,
+            "livemode": payment.livemode,
+            "data": {
+                "payment_id": payment.id,
+                "idempotency_key": payment.idempotency_key,
+                "status": payment.status,
+                "amount": str(payment.amount),
+            },
+        }
 
-    webhook = WebhookDelivery.objects.create(
-        payment=payment,
-        event_id=event_id,
-        event_type=event_type,
-        target_url=target_url,
-        payload=payload,
-    )
-    deliver_webhook_attempt.delay(webhook.id)
+        webhook = WebhookDelivery.objects.create(
+            payment=payment,
+            event_id=event_id,
+            event_type=event_type,
+            target_url=target_url,
+            payload=payload,
+        )
+        from .models import WebhookOutbox
+        WebhookOutbox.objects.create(
+            delivery=webhook,
+            status=WebhookOutbox.STATUS_PENDING,
+            next_attempt_at=timezone.now(),
+        )
+    return webhook
+
+
+def notify_status_change(payment):
+    event_type = STATUS_TO_EVENT_TYPE.get(payment.status)
+    if not event_type:
+        raise ValueError(
+            f"Unsupported payment status '{payment.status}' for webhook notification. "
+            f"Allowed statuses: {list(STATUS_TO_EVENT_TYPE.keys())}"
+        )
+
+    webhook = _create_delivery_and_outbox(payment)
+    if webhook is not None and getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False) and not getattr(payment, "_skip_outbox_drain", False):
+        from .tasks import drain_webhook_outbox
+        drain_webhook_outbox()
     return webhook
 
 
