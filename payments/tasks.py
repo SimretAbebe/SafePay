@@ -15,7 +15,7 @@ from django.utils import timezone
 
 import urllib.parse
 
-from .models import Payment, WebhookDelivery
+from .models import Payment, WebhookDelivery, WebhookOutbox
 from .webhook_secrets import derive_merchant_secret
 from .webhook_urls import is_target_safe
 
@@ -335,3 +335,88 @@ def review_queue_digest():
     lines.append(f"\n  Oldest item age: {oldest_age}")
 
     send_alert_message("\n".join(lines))
+
+
+OUTBOX_BACKOFF_SECONDS = [30, 60, 120, 300, 600, 900]
+
+
+@shared_task
+def drain_webhook_outbox():
+    now = timezone.now()
+    batch_size = getattr(settings, "OUTBOX_BATCH_SIZE", 100)
+    max_attempts = getattr(settings, "OUTBOX_MAX_ATTEMPTS", 10)
+    retention_days = getattr(settings, "OUTBOX_RETENTION_DAYS", 14)
+
+    sent_count = 0
+    failed_count = 0
+    final_skipped_count = 0
+
+    with transaction.atomic():
+        candidates = list(
+            WebhookOutbox.objects.select_for_update(skip_locked=True)
+            .select_related("delivery")
+            .filter(
+                status=WebhookOutbox.STATUS_PENDING,
+                next_attempt_at__lte=now,
+            )
+            .order_by("next_attempt_at")[:batch_size]
+        )
+
+        for row in candidates:
+            # If the delivery already reached a final state (succeeded or dead/failed),
+            # mark the outbox row sent without queueing again.
+            if row.delivery.status in ("succeeded", "failed"):
+                row.status = WebhookOutbox.STATUS_SENT
+                row.sent_at = now
+                row.save(update_fields=["status", "sent_at"])
+                final_skipped_count += 1
+                continue
+
+            try:
+                deliver_webhook_attempt.delay(row.delivery_id)
+                row.status = WebhookOutbox.STATUS_SENT
+                row.sent_at = now
+                row.save(update_fields=["status", "sent_at"])
+                sent_count += 1
+            except Exception:
+                row.attempts += 1
+                row.last_error_code = "broker_unavailable"
+                if row.attempts >= max_attempts:
+                    row.status = WebhookOutbox.STATUS_NEEDS_REVIEW
+                backoff_idx = min(row.attempts - 1, len(OUTBOX_BACKOFF_SECONDS) - 1)
+                backoff_sec = OUTBOX_BACKOFF_SECONDS[max(0, backoff_idx)]
+                row.next_attempt_at = now + timedelta(seconds=backoff_sec)
+                row.save(update_fields=["attempts", "last_error_code", "next_attempt_at", "status"])
+                failed_count += 1
+
+    total_processed = len(candidates)
+    logger.info(
+        "Outbox sweep summary: processed=%d sent=%d failed=%d final_skipped=%d",
+        total_processed,
+        sent_count,
+        failed_count,
+        final_skipped_count,
+    )
+
+    # Cleanup: delete sent outbox rows older than OUTBOX_RETENTION_DAYS in batches of 500.
+    # Never delete needs_review rows.
+    cutoff = now - timedelta(days=retention_days)
+    while True:
+        old_ids = list(
+            WebhookOutbox.objects.filter(
+                status=WebhookOutbox.STATUS_SENT,
+                sent_at__lt=cutoff,
+            ).values_list("id", flat=True)[:500]
+        )
+        if not old_ids:
+            break
+        WebhookOutbox.objects.filter(id__in=old_ids).delete()
+        if len(old_ids) < 500:
+            break
+
+    return {
+        "processed": total_processed,
+        "sent": sent_count,
+        "failed": failed_count,
+        "final_skipped": final_skipped_count,
+    }
