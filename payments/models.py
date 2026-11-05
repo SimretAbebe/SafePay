@@ -192,6 +192,11 @@ class Payment(models.Model):
                 from payments.ledger.services import post_payment_succeeded
                 post_payment_succeeded(self)
 
+            if new_status in {"succeeded", "failed", "cancelled", "expired"}:
+                if not (self.provider_reference and "mismatch" in self.provider_reference):
+                    from payments.services import _create_delivery_and_outbox
+                    _create_delivery_and_outbox(self)
+
     def flag_for_review(self, reason, now=None):
         """Set needs_review=True with timestamps. Only sets needs_review_at
         if the payment was not already flagged, so we never overwrite the
@@ -382,3 +387,54 @@ class ProviderAttempt(models.Model):
 
     def __str__(self):
         return f"[{self.payment_id}] {self.provider} → {self.outcome}"
+
+
+class WebhookOutbox(models.Model):
+    """
+    Transactional outbox for webhook dispatch.
+
+    One row per WebhookDelivery. Written in the same transaction as the
+    status change so a broker outage can never lose a webhook intent.
+    The drain_webhook_outbox sweeper picks up pending rows and calls
+    deliver_webhook_attempt.delay(); on success it marks the row sent.
+    """
+
+    STATUS_PENDING = "pending"
+    STATUS_SENT = "sent"
+    STATUS_NEEDS_REVIEW = "needs_review"
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("sent", "Sent"),
+        ("needs_review", "Needs Review"),
+    ]
+
+    delivery = models.OneToOneField(
+        "WebhookDelivery",
+        on_delete=models.PROTECT,
+        related_name="outbox",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="pending",
+        db_index=True,
+    )
+    attempts = models.PositiveIntegerField(default=0)
+    # When the sweeper should next pick this row up.
+    next_attempt_at = models.DateTimeField(db_index=True)
+    # Short machine-readable code only – never raw exception text or secrets.
+    last_error_code = models.CharField(max_length=50, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["status", "next_attempt_at"],
+                name="outbox_status_next_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"OutboxRow delivery={self.delivery_id} status={self.status} attempts={self.attempts}"
