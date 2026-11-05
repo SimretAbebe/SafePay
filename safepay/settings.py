@@ -103,7 +103,7 @@ SAFE_PAY_API_KEY = os.getenv("SAFE_PAY_API_KEY", "dev-api-key-change-me")
 ENABLE_FAKE_PROVIDER = True
 FAKE_PROVIDER_DELAY_MS = int(os.getenv("FAKE_PROVIDER_DELAY_MS", "300"))
 LIVE_MODE_AVAILABLE = os.getenv("LIVE_MODE_AVAILABLE", "True").strip().lower() in ("true", "1")
-DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "fake").strip()  # default: fake
+DEFAULT_PROVIDER = "fake"
 FAKE_PROVIDER_SECRET = os.getenv("FAKE_PROVIDER_SECRET", "fake-secret-for-tests")
 
 CHAPA_SECRET_KEY = os.getenv("CHAPA_SECRET_KEY", "")
@@ -141,6 +141,12 @@ REVIEW_DIGEST_HOUR_UTC = int(os.getenv("REVIEW_DIGEST_HOUR_UTC", "6"))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 RECONCILE_HEARTBEAT_URL = os.getenv("RECONCILE_HEARTBEAT_URL", "")
+
+# Transactional outbox configuration
+OUTBOX_SWEEP_SECONDS = int(os.getenv("OUTBOX_SWEEP_SECONDS", "30"))
+OUTBOX_BATCH_SIZE = int(os.getenv("OUTBOX_BATCH_SIZE", "100"))
+OUTBOX_MAX_ATTEMPTS = int(os.getenv("OUTBOX_MAX_ATTEMPTS", "10"))
+OUTBOX_RETENTION_DAYS = int(os.getenv("OUTBOX_RETENTION_DAYS", "14"))
 
 # Payment expiry configuration
 PAYMENT_EXPIRY_SECONDS = int(os.getenv("PAYMENT_EXPIRY_SECONDS", "86400"))
@@ -191,6 +197,10 @@ CELERY_BEAT_SCHEDULE = {
     "review_queue_digest": {
         "task": "payments.tasks.review_queue_digest",
         "schedule": crontab(hour=REVIEW_DIGEST_HOUR_UTC, minute=0),
+    },
+    "drain_webhook_outbox": {
+        "task": "payments.tasks.drain_webhook_outbox",
+        "schedule": OUTBOX_SWEEP_SECONDS,
     },
 }
 

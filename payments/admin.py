@@ -14,6 +14,7 @@ from .models import (
     ProviderAttempt,
     ReviewQueuePayment,
     WebhookDelivery,
+    WebhookOutbox,
 )
 from .services import resend_delivery
 from .tasks import deliver_webhook_attempt, reconcile_payment
@@ -365,6 +366,62 @@ class WebhookDeliveryAdmin(admin.ModelAdmin):
     search_fields = ("event_id", "event_type", "payment__idempotency_key", "target_url")
     readonly_fields = ("event_id", "event_type", "created_at", "updated_at")
     actions = [retry_webhook_deliveries]
+
+
+@admin.action(description="Requeue selected (needs review)")
+def requeue_outbox_rows(modeladmin, request, queryset):
+    needs_review_rows = queryset.filter(status=WebhookOutbox.STATUS_NEEDS_REVIEW)
+    requeued_count = 0
+    now = timezone.now()
+    for row in needs_review_rows:
+        row.status = WebhookOutbox.STATUS_PENDING
+        row.attempts = 0
+        row.next_attempt_at = now
+        row.last_error_code = ""
+        row.save(update_fields=["status", "attempts", "next_attempt_at", "last_error_code"])
+        requeued_count += 1
+
+    skipped_count = queryset.count() - requeued_count
+    if requeued_count:
+        modeladmin.message_user(
+            request,
+            f"Requeued {requeued_count} outbox row(s).",
+            level=messages.SUCCESS,
+        )
+    if skipped_count:
+        modeladmin.message_user(
+            request,
+            f"Skipped {skipped_count} row(s) not in needs_review state.",
+            level=messages.WARNING,
+        )
+
+
+@admin.register(WebhookOutbox)
+class WebhookOutboxAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "delivery_id_display",
+        "status",
+        "attempts",
+        "next_attempt_at",
+        "last_error_code",
+        "sent_at",
+    )
+    list_filter = ("status",)
+    actions = [requeue_outbox_rows]
+
+    @admin.display(description="Delivery ID")
+    def delivery_id_display(self, obj):
+        return obj.delivery_id
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(InboundWebhookEvent)
