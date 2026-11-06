@@ -645,6 +645,56 @@ def payment_detail(request, pk):
 
 
 @extend_schema(
+    summary="Investigate a payment",
+    description=(
+        "Returns a read-only, plain-English timeline and diagnostic summary of one payment's "
+        "story built purely from existing audit records. Includes findings and recommended next steps."
+    ),
+    responses={
+        200: OpenApiResponse(
+            description="Payment investigation story.",
+            examples=[
+                OpenApiExample(
+                    "Clean payment example",
+                    value={
+                        "payment_id": 42,
+                        "status": "succeeded",
+                        "summary": "Paid and confirmed. Merchant notified once.",
+                        "timeline": [
+                            {"at": "2026-11-06T10:00:00Z", "event": "Payment created"},
+                            {"at": "2026-11-06T10:00:01Z", "event": "Provider chapa created a checkout link"},
+                            {"at": "2026-11-06T10:01:00Z", "event": "Status changed from pending to processing"},
+                            {"at": "2026-11-06T10:01:05Z", "event": "Status changed from processing to succeeded"},
+                            {"at": "2026-11-06T10:01:06Z", "event": "Merchant notified"},
+                        ],
+                        "findings": [],
+                        "next_step": None,
+                    },
+                ),
+            ],
+        ),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        404: OpenApiResponse(description="Payment not found in this environment."),
+        429: OpenApiResponse(description="Rate limit exceeded."),
+    },
+    tags=["Payments"],
+)
+@api_view(["GET"])
+@permission_classes([HasAPIKey])
+@throttle_classes([PaymentReadRateThrottle])
+def payment_investigate(request, pk):
+    payment = get_object_or_404(
+        Payment,
+        pk=pk,
+        merchant=request.merchant,
+        livemode=getattr(request, "livemode", False),
+    )
+    from .investigator import build_investigation
+    data = build_investigation(payment)
+    return Response(data, status=status.HTTP_200_OK)
+
+
+@extend_schema(
     summary="Verify a payment",
     description=(
         "Queries the payment provider for the latest status and synchronises it locally.\n\n"
