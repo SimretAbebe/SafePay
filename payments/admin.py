@@ -1,9 +1,12 @@
 from django import forms
 from django.conf import settings
 from django.contrib import admin, messages
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
+from django.urls import path, reverse
 from django.utils import timezone
-
-from django.core.exceptions import ValidationError
+from django.utils.html import escape, format_html
 
 from .models import (
     InboundWebhookEvent,
@@ -267,6 +270,7 @@ class PaymentAdmin(admin.ModelAdmin):
         "review_reason",
         "expires_at",
         "created_at",
+        "investigate_link",
     )
     list_filter = ("status", "livemode", "merchant", "provider", "needs_review")
     search_fields = ("idempotency_key", "sender", "receiver", "provider_reference")
@@ -335,6 +339,96 @@ class PaymentAdmin(admin.ModelAdmin):
             next_sync_at=now,
         )
         self.message_user(request, f"{count} payment(s) review flag cleared and queued for check.", level=messages.SUCCESS)
+
+    @admin.display(description="Investigate")
+    def investigate_link(self, obj):
+        url = reverse("admin:payment_investigate", args=[obj.pk])
+        return format_html('<a href="{}">Investigate</a>', url)
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                "<int:pk>/investigate/",
+                self.admin_site.admin_view(self.investigate_view),
+                name="payment_investigate",
+            ),
+        ]
+        return custom_urls + urls
+
+    def investigate_view(self, request, pk):
+        if not request.user.is_staff:
+            raise PermissionDenied("Staff access required.")
+        if not request.user.has_perm("payments.view_payment"):
+            raise PermissionDenied("View payment permission required.")
+
+        payment = get_object_or_404(Payment, pk=pk)
+
+        from .investigator import build_investigation
+        data = build_investigation(payment)
+
+        # Build clean admin HTML without requiring external template files
+        timeline_rows = "".join(
+            f"<tr><td style='padding:8px;border-bottom:1px solid #ddd;'>{escape(item['at'])}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #ddd;'>{escape(item['event'])}</td></tr>"
+            for item in data["timeline"]
+        )
+        if not timeline_rows:
+            timeline_rows = "<tr><td colspan='2' style='padding:8px;'>No events recorded.</td></tr>"
+
+        findings_items = "".join(
+            f"<li>{escape(finding)}</li>" for finding in data["findings"]
+        )
+        findings_html = f"<ul>{findings_items}</ul>" if findings_items else "<p>No issues found.</p>"
+
+        next_step_html = (
+            f"<p><strong>{escape(data['next_step'])}</strong></p>"
+            if data["next_step"]
+            else "<p>No action needed.</p>"
+        )
+
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment {escape(str(data['payment_id']))} Investigation</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 20px 40px; color: #333; }}
+        h1 {{ border-bottom: 2px solid #79aec8; padding-bottom: 10px; color: #417690; }}
+        h2 {{ margin-top: 30px; color: #417690; }}
+        .summary-card {{ background: #f8f9fa; border-left: 4px solid #79aec8; padding: 15px; margin-bottom: 25px; font-size: 1.1em; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+        th {{ background: #79aec8; color: white; text-align: left; padding: 10px; }}
+        .nav-back {{ margin-bottom: 20px; }}
+        .nav-back a {{ color: #417690; text-decoration: none; font-weight: bold; }}
+    </style>
+</head>
+<body>
+    <div class="nav-back"><a href="{reverse('admin:payments_payment_changelist')}">&larr; Back to Payments</a></div>
+    <h1>Payment {escape(str(data['payment_id']))} Investigation</h1>
+    
+    <div class="summary-card">
+        <strong>Status:</strong> {escape(data['status'])}<br/>
+        <strong>Summary:</strong> {escape(data['summary'])}
+    </div>
+
+    <h2>Timeline</h2>
+    <table>
+        <thead>
+            <tr><th>Timestamp</th><th>Event</th></tr>
+        </thead>
+        <tbody>
+            {timeline_rows}
+        </tbody>
+    </table>
+
+    <h2>Findings</h2>
+    {findings_html}
+
+    <h2>Next Step</h2>
+    {next_step_html}
+</body>
+</html>"""
+        return HttpResponse(html_content, content_type="text/html; charset=utf-8")
 
 
 @admin.action(description="Retry selected webhook deliveries")
@@ -543,6 +637,96 @@ class ReviewQueuePaymentAdmin(admin.ModelAdmin):
             next_sync_at=now,
         )
         self.message_user(request, f"{count} payment(s) review flag cleared and queued for check.", level=messages.SUCCESS)
+
+    @admin.display(description="Investigate")
+    def investigate_link(self, obj):
+        url = reverse("admin:payment_investigate", args=[obj.pk])
+        return format_html('<a href="{}">Investigate</a>', url)
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                "<int:pk>/investigate/",
+                self.admin_site.admin_view(self.investigate_view),
+                name="payment_investigate",
+            ),
+        ]
+        return custom_urls + urls
+
+    def investigate_view(self, request, pk):
+        if not request.user.is_staff:
+            raise PermissionDenied("Staff access required.")
+        if not request.user.has_perm("payments.view_payment"):
+            raise PermissionDenied("View payment permission required.")
+
+        payment = get_object_or_404(Payment, pk=pk)
+
+        from .investigator import build_investigation
+        data = build_investigation(payment)
+
+        # Build clean admin HTML without requiring external template files
+        timeline_rows = "".join(
+            f"<tr><td style='padding:8px;border-bottom:1px solid #ddd;'>{escape(item['at'])}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #ddd;'>{escape(item['event'])}</td></tr>"
+            for item in data["timeline"]
+        )
+        if not timeline_rows:
+            timeline_rows = "<tr><td colspan='2' style='padding:8px;'>No events recorded.</td></tr>"
+
+        findings_items = "".join(
+            f"<li>{escape(finding)}</li>" for finding in data["findings"]
+        )
+        findings_html = f"<ul>{findings_items}</ul>" if findings_items else "<p>No issues found.</p>"
+
+        next_step_html = (
+            f"<p><strong>{escape(data['next_step'])}</strong></p>"
+            if data["next_step"]
+            else "<p>No action needed.</p>"
+        )
+
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment {escape(str(data['payment_id']))} Investigation</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 20px 40px; color: #333; }}
+        h1 {{ border-bottom: 2px solid #79aec8; padding-bottom: 10px; color: #417690; }}
+        h2 {{ margin-top: 30px; color: #417690; }}
+        .summary-card {{ background: #f8f9fa; border-left: 4px solid #79aec8; padding: 15px; margin-bottom: 25px; font-size: 1.1em; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+        th {{ background: #79aec8; color: white; text-align: left; padding: 10px; }}
+        .nav-back {{ margin-bottom: 20px; }}
+        .nav-back a {{ color: #417690; text-decoration: none; font-weight: bold; }}
+    </style>
+</head>
+<body>
+    <div class="nav-back"><a href="{reverse('admin:payments_payment_changelist')}">&larr; Back to Payments</a></div>
+    <h1>Payment {escape(str(data['payment_id']))} Investigation</h1>
+    
+    <div class="summary-card">
+        <strong>Status:</strong> {escape(data['status'])}<br/>
+        <strong>Summary:</strong> {escape(data['summary'])}
+    </div>
+
+    <h2>Timeline</h2>
+    <table>
+        <thead>
+            <tr><th>Timestamp</th><th>Event</th></tr>
+        </thead>
+        <tbody>
+            {timeline_rows}
+        </tbody>
+    </table>
+
+    <h2>Findings</h2>
+    {findings_html}
+
+    <h2>Next Step</h2>
+    {next_step_html}
+</body>
+</html>"""
+        return HttpResponse(html_content, content_type="text/html; charset=utf-8")
 
 
 # ---------------------------------------------------------------------------
