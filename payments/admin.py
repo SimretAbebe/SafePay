@@ -367,19 +367,54 @@ class PaymentAdmin(admin.ModelAdmin):
         from .investigator import build_investigation
         data = build_investigation(payment)
 
+        # Map source types to model classes for admin link resolution
+        type_model_map = {
+            "payment": Payment,
+            "status_change": PaymentStatusHistory,
+            "provider_attempt": ProviderAttempt,
+            "reconciliation": Payment,
+            "webhook_delivery": WebhookDelivery,
+            "webhook_outbox": WebhookOutbox,
+        }
+
+        def render_source_link(source_ref):
+            if not source_ref or not isinstance(source_ref, dict):
+                return ""
+            stype = source_ref.get("type", "")
+            sid = source_ref.get("source_id")
+            model = type_model_map.get(stype)
+            if model and model in admin.site._registry:
+                app_label = model._meta.app_label
+                model_name = model._meta.model_name
+                try:
+                    url = reverse(f"admin:{app_label}_{model_name}_change", args=[sid])
+                    return f'<a href="{url}">{escape(stype)} #{escape(str(sid))}</a>'
+                except Exception:
+                    pass
+            return f"{escape(stype)} #{escape(str(sid))}"
+
         # Build clean admin HTML without requiring external template files
         timeline_rows = "".join(
             f"<tr><td style='padding:8px;border-bottom:1px solid #ddd;'>{escape(item['at'])}</td>"
-            f"<td style='padding:8px;border-bottom:1px solid #ddd;'>{escape(item['event'])}</td></tr>"
+            f"<td style='padding:8px;border-bottom:1px solid #ddd;'>{escape(item['event'])}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #ddd;'>{render_source_link(item.get('source'))}</td></tr>"
             for item in data["timeline"]
         )
         if not timeline_rows:
-            timeline_rows = "<tr><td colspan='2' style='padding:8px;'>No events recorded.</td></tr>"
+            timeline_rows = "<tr><td colspan='3' style='padding:8px;'>No events recorded.</td></tr>"
 
-        findings_items = "".join(
-            f"<li>{escape(finding)}</li>" for finding in data["findings"]
-        )
-        findings_html = f"<ul>{findings_items}</ul>" if findings_items else "<p>No issues found.</p>"
+        findings_items = []
+        for finding in data["findings"]:
+            if isinstance(finding, dict):
+                ftext = escape(finding.get("text", ""))
+                basis = escape(finding.get("basis", ""))
+                ev_links = [render_source_link(ref) for ref in finding.get("evidence", [])]
+                ev_str = f" [Evidence: {', '.join(ev_links)}]" if ev_links else ""
+                findings_items.append(f"<li>{ftext} <em>({basis})</em>{ev_str}</li>")
+            else:
+                findings_items.append(f"<li>{escape(finding)}</li>")
+
+        findings_html = f"<ul>{''.join(findings_items)}</ul>" if findings_items else "<p>No issues found.</p>"
 
         next_step_html = (
             f"<p><strong>{escape(data['next_step'])}</strong></p>"
@@ -414,7 +449,7 @@ class PaymentAdmin(admin.ModelAdmin):
     <h2>Timeline</h2>
     <table>
         <thead>
-            <tr><th>Timestamp</th><th>Event</th></tr>
+            <tr><th>Timestamp</th><th>Event</th><th>Evidence</th></tr>
         </thead>
         <tbody>
             {timeline_rows}
@@ -665,19 +700,54 @@ class ReviewQueuePaymentAdmin(admin.ModelAdmin):
         from .investigator import build_investigation
         data = build_investigation(payment)
 
+        # Map source types to model classes for admin link resolution
+        type_model_map = {
+            "payment": Payment,
+            "status_change": PaymentStatusHistory,
+            "provider_attempt": ProviderAttempt,
+            "reconciliation": Payment,
+            "webhook_delivery": WebhookDelivery,
+            "webhook_outbox": WebhookOutbox,
+        }
+
+        def render_source_link(source_ref):
+            if not source_ref or not isinstance(source_ref, dict):
+                return ""
+            stype = source_ref.get("type", "")
+            sid = source_ref.get("source_id")
+            model = type_model_map.get(stype)
+            if model and model in admin.site._registry:
+                app_label = model._meta.app_label
+                model_name = model._meta.model_name
+                try:
+                    url = reverse(f"admin:{app_label}_{model_name}_change", args=[sid])
+                    return f'<a href="{url}">{escape(stype)} #{escape(str(sid))}</a>'
+                except Exception:
+                    pass
+            return f"{escape(stype)} #{escape(str(sid))}"
+
         # Build clean admin HTML without requiring external template files
         timeline_rows = "".join(
             f"<tr><td style='padding:8px;border-bottom:1px solid #ddd;'>{escape(item['at'])}</td>"
-            f"<td style='padding:8px;border-bottom:1px solid #ddd;'>{escape(item['event'])}</td></tr>"
+            f"<td style='padding:8px;border-bottom:1px solid #ddd;'>{escape(item['event'])}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #ddd;'>{render_source_link(item.get('source'))}</td></tr>"
             for item in data["timeline"]
         )
         if not timeline_rows:
-            timeline_rows = "<tr><td colspan='2' style='padding:8px;'>No events recorded.</td></tr>"
+            timeline_rows = "<tr><td colspan='3' style='padding:8px;'>No events recorded.</td></tr>"
 
-        findings_items = "".join(
-            f"<li>{escape(finding)}</li>" for finding in data["findings"]
-        )
-        findings_html = f"<ul>{findings_items}</ul>" if findings_items else "<p>No issues found.</p>"
+        findings_items = []
+        for finding in data["findings"]:
+            if isinstance(finding, dict):
+                ftext = escape(finding.get("text", ""))
+                basis = escape(finding.get("basis", ""))
+                ev_links = [render_source_link(ref) for ref in finding.get("evidence", [])]
+                ev_str = f" [Evidence: {', '.join(ev_links)}]" if ev_links else ""
+                findings_items.append(f"<li>{ftext} <em>({basis})</em>{ev_str}</li>")
+            else:
+                findings_items.append(f"<li>{escape(finding)}</li>")
+
+        findings_html = f"<ul>{''.join(findings_items)}</ul>" if findings_items else "<p>No issues found.</p>"
 
         next_step_html = (
             f"<p><strong>{escape(data['next_step'])}</strong></p>"
@@ -712,7 +782,7 @@ class ReviewQueuePaymentAdmin(admin.ModelAdmin):
     <h2>Timeline</h2>
     <table>
         <thead>
-            <tr><th>Timestamp</th><th>Event</th></tr>
+            <tr><th>Timestamp</th><th>Event</th><th>Evidence</th></tr>
         </thead>
         <tbody>
             {timeline_rows}
