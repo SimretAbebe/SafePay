@@ -172,3 +172,38 @@ Optional flags:
 
 ---
 
+## Checking a SafePay Webhook
+
+When integrating outbound webhooks, developers can inspect and verify received payloads step-by-step using the `check_webhook` management command.
+
+### 1. Save the webhook payload and capture headers
+Save the exact raw body received by your endpoint into a file (e.g. `webhook_body.json`). Note the values from the following response headers:
+- `X-SafePay-Timestamp` (e.g. `1731000000`)
+- `X-SafePay-Signature` (e.g. `a1b2c3d4e5f6...`)
+
+### 2. Set your merchant API key
+Export your merchant test API key to an environment variable:
+
+```bash
+export SAFEPAY_API_KEY="sp_test_your_api_key_here"
+```
+
+### 3. Run the diagnostic command
+
+```bash
+python manage.py check_webhook \
+  --body webhook_body.json \
+  --timestamp 1731000000 \
+  --signature a1b2c3d4e5f6... \
+  --merchant-id 1 \
+  --seen-store seen_events.json
+```
+
+The command checks:
+1. **Parse**: Confirms valid JSON with required envelope keys (`id`, `type`, `livemode`, `data`).
+2. **Signature**: Validates HMAC-SHA256 against the merchant's derived secret.
+3. **Timestamp**: Confirms delivery is within the tolerance window (default 300s).
+4. **Replay**: Checks whether the event ID has been processed before (using `--seen-store`).
+5. **Verify**: Authoritatively confirms current payment status via `GET /api/payments/<id>/verify/`.
+
+
