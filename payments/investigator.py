@@ -14,12 +14,16 @@ def build_investigation(payment) -> Dict[str, Any]:
     Uses existing records only. Never touches external providers or modifies state.
     Never returns secrets, keys, signatures, URLs, error traces, or customer PII.
     """
-    timeline: List[Dict[str, str]] = []
+    timeline: List[Dict[str, Any]] = []
 
     # 1. Payment created
     timeline.append({
         "at": payment.created_at.isoformat(),
         "event": "Payment created",
+        "source": {
+            "type": "payment",
+            "source_id": payment.id,
+        },
         "_seq": 0,
     })
 
@@ -28,12 +32,17 @@ def build_investigation(payment) -> Dict[str, Any]:
         timeline.append({
             "at": history.changed_at.isoformat(),
             "event": f"Status changed from {history.from_status} to {history.to_status}",
+            "source": {
+                "type": "status_change",
+                "source_id": history.id,
+            },
             "_seq": 10,
         })
 
     # 3. ProviderAttempt
     # outcomes: created, failed_not_created, failed_unknown, skipped_circuit_open
-    for attempt in payment.provider_attempts.all():
+    attempts = list(payment.provider_attempts.all())
+    for attempt in attempts:
         if attempt.outcome == "created":
             event_text = f"Provider {attempt.provider} created a checkout link"
         elif attempt.outcome == "failed_not_created":
@@ -48,6 +57,10 @@ def build_investigation(payment) -> Dict[str, Any]:
         timeline.append({
             "at": attempt.created_at.isoformat(),
             "event": event_text,
+            "source": {
+                "type": "provider_attempt",
+                "source_id": attempt.id,
+            },
             "_seq": 20,
         })
 
@@ -56,6 +69,10 @@ def build_investigation(payment) -> Dict[str, Any]:
         timeline.append({
             "at": payment.last_synced_at.isoformat(),
             "event": "Re-checked with the provider",
+            "source": {
+                "type": "reconciliation",
+                "source_id": payment.id,
+            },
             "_seq": 30,
         })
 
@@ -79,6 +96,10 @@ def build_investigation(payment) -> Dict[str, Any]:
         timeline.append({
             "at": delivery_at,
             "event": delivery_event,
+            "source": {
+                "type": "webhook_delivery",
+                "source_id": delivery.id,
+            },
             "_seq": 40,
         })
 
@@ -101,16 +122,27 @@ def build_investigation(payment) -> Dict[str, Any]:
             timeline.append({
                 "at": outbox_at,
                 "event": outbox_event,
+                "source": {
+                    "type": "webhook_outbox",
+                    "source_id": outbox.id,
+                },
                 "_seq": 50,
             })
 
     # Sort timeline: oldest first by ISO timestamp, with stable secondary tie-break
     timeline.sort(key=lambda item: (item["at"], item["_seq"]))
-    # Remove internal _seq key
-    cleaned_timeline = [{"at": item["at"], "event": item["event"]} for item in timeline]
+    # Remove internal _seq key while keeping at, event, source
+    cleaned_timeline = [
+        {
+            "at": item["at"],
+            "event": item["event"],
+            "source": item["source"],
+        }
+        for item in timeline
+    ]
 
     # --- Findings & Next Step ---
-    findings: List[str] = []
+    findings: List[Dict[str, Any]] = []
     next_step: Optional[str] = None
 
     # Check for late payment scenario:
@@ -125,11 +157,26 @@ def build_investigation(payment) -> Dict[str, Any]:
         "cannot_verify": "the provider cannot verify this payment without a transaction id",
     }
 
+    # Helper: evidence for flagged payment
+    # All provider attempts for this payment
+    attempt_evidence = [
+        {"type": "provider_attempt", "source_id": att.id}
+        for att in attempts
+    ]
+
     if payment.needs_review:
         plain_reason = reason_map.get(payment.review_reason, payment.review_reason or "manual review required")
-        findings.append(f"Flagged for review: {plain_reason}")
+        findings.append({
+            "text": f"Flagged for review: {plain_reason}",
+            "basis": "known",
+            "evidence": attempt_evidence,
+        })
         if is_late_paid_mismatch:
-            findings.append("Payment was reported paid after it had already expired.")
+            findings.append({
+                "text": "Payment was reported paid after it had already expired.",
+                "basis": "known",
+                "evidence": attempt_evidence,
+            })
 
         # Determine next_step based on primary review reason
         if payment.review_reason == "unknown_outcome":
@@ -145,23 +192,66 @@ def build_investigation(payment) -> Dict[str, Any]:
 
     # sync_attempts above 3 while still pending
     if payment.status == "pending" and payment.sync_attempts > 3:
-        findings.append(f"Re-checked {payment.sync_attempts} times and still pending")
+        findings.append({
+            "text": f"Re-checked {payment.sync_attempts} times and still pending",
+            "basis": "known",
+            "evidence": [
+                {"type": "reconciliation", "source_id": payment.id}
+            ] if payment.last_synced_at else [],
+        })
         if not next_step:
             next_step = "Check if the customer abandoned checkout or if provider webhook failed."
 
     # A dead webhook delivery
     dead_deliveries = [d for d in deliveries if d.status == "failed"]
     for dead_d in dead_deliveries:
-        findings.append(f"Merchant notification failed after {dead_d.attempt_count} attempts")
+        findings.append({
+            "text": f"Merchant notification failed after {dead_d.attempt_count} attempts",
+            "basis": "known",
+            "evidence": [
+                {"type": "webhook_delivery", "source_id": dead_d.id}
+            ],
+        })
         if not next_step:
             next_step = "Check merchant webhook target URL and retry delivery from the admin."
 
     # A needs_review outbox row
-    outbox_review = any(getattr(d, "outbox", None) and d.outbox.status == "needs_review" for d in deliveries)
-    if outbox_review:
-        findings.append("Notification outbox needs review")
+    outbox_review_rows = [
+        getattr(d, "outbox", None)
+        for d in deliveries
+        if getattr(d, "outbox", None) and d.outbox.status == "needs_review"
+    ]
+    if outbox_review_rows:
+        findings.append({
+            "text": "Notification outbox needs review",
+            "basis": "known",
+            "evidence": [
+                {"type": "webhook_outbox", "source_id": ob.id}
+                for ob in outbox_review_rows
+            ],
+        })
         if not next_step:
             next_step = "Inspect Celery broker connectivity and requeue outbox items from the admin."
+
+    # STEP 3: KNOWN AND UNKNOWN FINDINGS
+    # Unknown: the last recorded event is not a final state (not succeeded, failed, cancelled or expired)
+    # and no provider confirmation exists.
+    # Specifically: A pending payment with sync attempts and no provider confirmation shows "unknown"
+    # and the last-recorded-event line; a succeeded payment shows no unknown line.
+    final_states = {"succeeded", "failed", "cancelled", "expired"}
+    is_terminal = payment.status in final_states
+    has_provider_confirmation = bool(payment.last_synced_at) or any(
+        att.outcome == "created" and payment.status in final_states
+        for att in attempts
+    )
+
+    if not is_terminal and not has_provider_confirmation and payment.sync_attempts > 0:
+        last_event_text = cleaned_timeline[-1]["event"] if cleaned_timeline else "Payment created"
+        findings.append({
+            "text": f"Last recorded event: {last_event_text}. The provider has not confirmed the outcome.",
+            "basis": "unknown",
+            "evidence": [],
+        })
 
     # --- Summary ---
     # Built from fixed templates only:
@@ -199,4 +289,3 @@ def build_investigation(payment) -> Dict[str, Any]:
         "findings": findings,
         "next_step": next_step,
     }
-
