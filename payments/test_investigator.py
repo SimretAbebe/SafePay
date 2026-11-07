@@ -170,7 +170,8 @@ class InvestigatorEngineTests(InvestigatorTestBase):
         for reason, expected_finding, expected_next_step in cases:
             self.payment.flag_for_review(reason)
             data = build_investigation(self.payment)
-            self.assertIn(expected_finding, data["findings"])
+            finding_texts = [f["text"] if isinstance(f, dict) else f for f in data["findings"]]
+            self.assertIn(expected_finding, finding_texts)
             self.assertEqual(data["next_step"], expected_next_step)
 
     # 4. An expired payment with a later mismatch review shows the late-payment summary and a finding.
@@ -180,7 +181,8 @@ class InvestigatorEngineTests(InvestigatorTestBase):
 
         data = build_investigation(self.payment)
         self.assertEqual(data["summary"], "Expired, but the provider later reported it paid. Needs review.")
-        self.assertIn("Payment was reported paid after it had already expired.", data["findings"])
+        finding_texts = [f["text"] if isinstance(f, dict) else f for f in data["findings"]]
+        self.assertIn("Payment was reported paid after it had already expired.", finding_texts)
         self.assertEqual(data["next_step"], "Compare both sides, then decide and record the outcome manually.")
 
     # 5. A pending payment re-checked more than 3 times shows the "still pending" finding.
@@ -190,7 +192,8 @@ class InvestigatorEngineTests(InvestigatorTestBase):
         self.payment.save()
 
         data = build_investigation(self.payment)
-        self.assertIn("Re-checked 4 times and still pending", data["findings"])
+        finding_texts = [f["text"] if isinstance(f, dict) else f for f in data["findings"]]
+        self.assertIn("Re-checked 4 times and still pending", finding_texts)
         events = [item["event"] for item in data["timeline"]]
         self.assertIn("Re-checked with the provider", events)
 
@@ -207,7 +210,8 @@ class InvestigatorEngineTests(InvestigatorTestBase):
             max_attempts=5,
         )
         data = build_investigation(self.payment)
-        self.assertIn("Merchant notification failed after 5 attempts", data["findings"])
+        finding_texts = [f["text"] if isinstance(f, dict) else f for f in data["findings"]]
+        self.assertIn("Merchant notification failed after 5 attempts", finding_texts)
         events = [item["event"] for item in data["timeline"]]
         self.assertIn("Merchant notification failed after 5 attempts", events)
 
@@ -371,7 +375,8 @@ class InvestigatorAdminAndParityTests(InvestigatorTestBase):
         self.assertIn(api_data["summary"], admin_content)
         # Findings match
         for finding in api_data["findings"]:
-            self.assertIn(finding, admin_content)
+            text = finding["text"] if isinstance(finding, dict) else finding
+            self.assertIn(text, admin_content)
         # Next step match
         if api_data["next_step"]:
             self.assertIn(api_data["next_step"], admin_content)
