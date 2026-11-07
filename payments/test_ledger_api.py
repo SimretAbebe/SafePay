@@ -10,7 +10,7 @@ Covers:
 """
 
 from decimal import Decimal
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as time_cls, timedelta, timezone
 from unittest.mock import MagicMock, patch
 from django.db import connection
 from django.urls import reverse
@@ -165,7 +165,10 @@ class LedgerExportTests(LedgerAPITestBase):
     def setUp(self):
         super().setUp()
         # generate a realistic number of entries (≈30) spread over two days
-        base = datetime.now(timezone.utc) - timedelta(days=1)
+        # Anchor base to the start of yesterday in UTC so all 30 hours fall cleanly within [yesterday, today]
+        now_utc = datetime.now(timezone.utc)
+        start_of_yesterday = datetime.combine(now_utc.date() - timedelta(days=1), time_cls.min, tzinfo=timezone.utc)
+        base = start_of_yesterday
         with connection.cursor() as cursor:
             for i in range(30):
                 p = create_payment(self.merchant, amount=str(10 + i), provider="chapa")
