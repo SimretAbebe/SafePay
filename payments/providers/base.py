@@ -84,6 +84,14 @@ class PaymentProvider(ABC):
     name: str
     supports_cancel: bool = True
     supports_livemode: bool = False
+    supports_refund: bool = False
+
+    def refund(self, payment: Any, amount: Any) -> str:
+        """
+        Request a refund with the provider.
+        Default implementation raises ProviderError indicating refunds are not supported.
+        """
+        raise ProviderError(f"Refund is not supported by provider '{getattr(self, 'name', 'unknown')}'")
 
     @abstractmethod
     def initialize(self, payment: Any, customer: Optional[dict] = None) -> InitResult:
