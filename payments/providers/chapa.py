@@ -28,6 +28,8 @@ class ChapaProvider(PaymentProvider):
     supports_cancel: bool = False
     # TODO: Live credentials and legal review are required first before enabling live mode.
     supports_livemode: bool = False
+    # TODO: See https://developer.chapa.co/docs/refund/ for Chapa refund API implementation.
+    supports_refund: bool = False
 
     def _get_config(self) -> Dict[str, Any]:
         """Read configuration lazily from Django settings at call time."""
