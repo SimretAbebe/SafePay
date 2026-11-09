@@ -18,6 +18,7 @@ from .models import (
     ReviewQueuePayment,
     WebhookDelivery,
     WebhookOutbox,
+    Refund,
 )
 from .services import resend_delivery
 from .tasks import deliver_webhook_attempt, reconcile_payment
@@ -871,3 +872,36 @@ class LedgerEntryAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Refund admin (read-only: no add, change, or delete)
+# ---------------------------------------------------------------------------
+
+@admin.register(Refund)
+class RefundAdmin(admin.ModelAdmin):
+    list_display = ("id", "payment", "amount", "status", "error_code", "created_at")
+    list_filter = ("status", "livemode", "created_at")
+    search_fields = ("idempotency_key", "payment__idempotency_key", "provider_refund_reference")
+    readonly_fields = (
+        "payment",
+        "merchant",
+        "livemode",
+        "amount",
+        "status",
+        "idempotency_key",
+        "provider_refund_reference",
+        "error_code",
+        "created_at",
+        "updated_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
