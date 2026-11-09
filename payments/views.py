@@ -20,7 +20,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiRespon
 from drf_spectacular.types import OpenApiTypes
 
 from .http_cache import etag_matches, make_etag
-from .models import InboundWebhookEvent, Payment, WebhookDelivery
+from .models import InboundWebhookEvent, Payment, Refund, WebhookDelivery
 from .permissions import HasAPIKey
 from .providers import (
     ChapaProvider,
@@ -1395,3 +1395,304 @@ def webhook_delivery_resend(request, pk):
         {"detail": "Only failed deliveries can be resent."},
         status=status.HTTP_409_CONFLICT,
     )
+
+
+
+# ---------------------------------------------------------------------------
+# Refund endpoints
+# ---------------------------------------------------------------------------
+
+from .refunds import request_refund as _request_refund
+
+
+def _serialize_refund(refund):
+    """Serialize a Refund to a safe dict - never includes provider_refund_reference."""
+    return {
+        "id": refund.id,
+        "payment_id": refund.payment_id,
+        "amount": str(refund.amount),
+        "status": refund.status,
+        "error_code": refund.error_code,
+        "created_at": refund.created_at.isoformat() if refund.created_at else None,
+    }
+
+
+@extend_schema(
+    summary="Request a refund",
+    description=(
+        "Create a refund request for a succeeded payment.\n\n"
+        "Requires the `Idempotency-Key` header (<= 100 characters).\n"
+        "If the provider does not support refunds the response is 409 with `error_code=\"refund_unsupported\"`."
+    ),
+    parameters=[
+        OpenApiParameter(
+            "Idempotency-Key",
+            OpenApiTypes.STR,
+            OpenApiParameter.HEADER,
+            required=True,
+            description="Unique key for idempotent refund creation (max 100 characters).",
+        ),
+    ],
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "amount": {"type": "string", "example": "40.00"},
+            },
+            "required": ["amount"],
+        },
+    },
+    responses={
+        201: OpenApiResponse(
+            description="Refund created",
+            examples=[
+                OpenApiExample(
+                    "Refund created",
+                    value={
+                        "id": 1,
+                        "payment_id": 42,
+                        "amount": "40.00",
+                        "status": "succeeded",
+                        "error_code": "",
+                        "created_at": "2026-11-09T10:00:00Z",
+                    },
+                )
+            ],
+        ),
+        200: OpenApiResponse(
+            description="Idempotent replay - refund already exists",
+            examples=[
+                OpenApiExample(
+                    "Refund replayed",
+                    value={
+                        "id": 1,
+                        "payment_id": 42,
+                        "amount": "40.00",
+                        "status": "succeeded",
+                        "error_code": "",
+                        "created_at": "2026-11-09T10:00:00Z",
+                    },
+                )
+            ],
+        ),
+        400: OpenApiResponse(description="Validation error"),
+        403: OpenApiResponse(description="Authentication required"),
+        404: OpenApiResponse(description="Payment not found"),
+        409: OpenApiResponse(description="Conflict - not succeeded / over-refund / unsupported"),
+        429: OpenApiResponse(description="Rate limited"),
+    },
+    tags=["refunds"],
+)
+@api_view(["POST"])
+@permission_classes([HasAPIKey])
+@throttle_classes([PaymentRateThrottle])
+def create_refund(request, pk):
+    """Create a refund for a payment."""
+    idempotency_key = request.headers.get("Idempotency-Key") or request.META.get("HTTP_IDEMPOTENCY_KEY")
+    if idempotency_key is not None:
+        idempotency_key = idempotency_key.strip()
+
+    if not idempotency_key or len(idempotency_key) > 100:
+        return Response(
+            {"detail": "Idempotency-Key header is required and must not exceed 100 characters."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Validate amount.
+    raw_amount = request.data.get("amount")
+    if raw_amount is None:
+        return Response({"detail": "amount is required."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        from decimal import Decimal, InvalidOperation
+        amount = Decimal(str(raw_amount))
+    except (InvalidOperation, TypeError, ValueError):
+        return Response({"detail": "amount must be a valid decimal number."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if amount <= 0:
+        return Response({"detail": "amount must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Max two decimal places.
+    if amount != amount.quantize(Decimal("0.01")):
+        return Response({"detail": "amount must have at most 2 decimal places."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Scoped lookup: payment must belong to request.merchant + livemode.
+    payment = get_object_or_404(
+        Payment,
+        pk=pk,
+        merchant=request.merchant,
+        livemode=request.livemode,
+    )
+
+    refund, http_code = _request_refund(payment, amount, idempotency_key)
+
+    if refund is None:
+        # 409: payment not succeeded or over-refund.
+        return Response(
+            {"detail": "Payment is not in a refundable state or refund amount exceeds remaining balance."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    resp_status = (
+        status.HTTP_200_OK if http_code == 200
+        else status.HTTP_409_CONFLICT if http_code == 409
+        else status.HTTP_201_CREATED
+    )
+
+    response = Response(_serialize_refund(refund), status=resp_status)
+    if http_code == 200:
+        response["Idempotent-Replayed"] = "true"
+    return response
+
+
+@extend_schema(
+    summary="List refunds for a payment",
+    description="Returns the most recent 50 refunds for a payment, ordered by newest first.",
+    responses={
+        200: OpenApiResponse(
+            description="List of refunds",
+            examples=[
+                OpenApiExample(
+                    "Refund list",
+                    value=[
+                        {
+                            "id": 1,
+                            "payment_id": 42,
+                            "amount": "40.00",
+                            "status": "succeeded",
+                            "error_code": "",
+                            "created_at": "2026-11-09T10:00:00Z",
+                        }
+                    ],
+                )
+            ],
+        ),
+        403: OpenApiResponse(description="Authentication required"),
+        404: OpenApiResponse(description="Payment not found"),
+        429: OpenApiResponse(description="Rate limited"),
+    },
+    tags=["refunds"],
+)
+@api_view(["GET"])
+@permission_classes([HasAPIKey])
+@throttle_classes([PaymentReadRateThrottle])
+def list_refunds(request, pk):
+    """List refunds for a payment."""
+    payment = get_object_or_404(
+        Payment,
+        pk=pk,
+        merchant=request.merchant,
+        livemode=request.livemode,
+    )
+    refunds = payment.refunds.order_by("-created_at")[:50]
+    return Response([_serialize_refund(r) for r in refunds])
+
+
+@extend_schema(
+    methods=["POST"],
+    summary="Request a refund",
+    description=(
+        "Create a refund request for a succeeded payment.\n\n"
+        "Requires the `Idempotency-Key` header (<= 100 characters).\n"
+        "If the provider does not support refunds the response is 409 with `error_code=\"refund_unsupported\"`."
+    ),
+    parameters=[
+        OpenApiParameter(
+            "Idempotency-Key",
+            OpenApiTypes.STR,
+            OpenApiParameter.HEADER,
+            required=True,
+            description="Unique key for idempotent refund creation (max 100 characters).",
+        ),
+    ],
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "amount": {"type": "string", "example": "40.00"},
+            },
+            "required": ["amount"],
+        },
+    },
+    responses={
+        201: OpenApiResponse(
+            description="Refund created",
+            examples=[
+                OpenApiExample(
+                    "Refund created",
+                    value={
+                        "id": 1,
+                        "payment_id": 42,
+                        "amount": "40.00",
+                        "status": "succeeded",
+                        "error_code": "",
+                        "created_at": "2026-11-09T10:00:00Z",
+                    },
+                )
+            ],
+        ),
+        200: OpenApiResponse(
+            description="Idempotent replay - refund already exists",
+            examples=[
+                OpenApiExample(
+                    "Refund replayed",
+                    value={
+                        "id": 1,
+                        "payment_id": 42,
+                        "amount": "40.00",
+                        "status": "succeeded",
+                        "error_code": "",
+                        "created_at": "2026-11-09T10:00:00Z",
+                    },
+                )
+            ],
+        ),
+        400: OpenApiResponse(description="Validation error"),
+        403: OpenApiResponse(description="Authentication required"),
+        404: OpenApiResponse(description="Payment not found"),
+        409: OpenApiResponse(description="Conflict - not succeeded / over-refund / unsupported"),
+        429: OpenApiResponse(description="Rate limited"),
+    },
+    tags=["refunds"],
+)
+@extend_schema(
+    methods=["GET"],
+    summary="List refunds for a payment",
+    description="Returns the most recent 50 refunds for a payment, ordered by newest first.",
+    responses={
+        200: OpenApiResponse(
+            description="List of refunds",
+            examples=[
+                OpenApiExample(
+                    "Refund list",
+                    value=[
+                        {
+                            "id": 1,
+                            "payment_id": 42,
+                            "amount": "40.00",
+                            "status": "succeeded",
+                            "error_code": "",
+                            "created_at": "2026-11-09T10:00:00Z",
+                        }
+                    ],
+                )
+            ],
+        ),
+        403: OpenApiResponse(description="Authentication required"),
+        404: OpenApiResponse(description="Payment not found"),
+        429: OpenApiResponse(description="Rate limited"),
+    },
+    tags=["refunds"],
+)
+@api_view(["GET", "POST"])
+def refunds_dispatch(request, pk, *args, **kwargs):
+    """
+    Router that delegates to list_refunds (GET) or create_refund (POST).
+    Auth and throttling are handled by each sub-view so that they fire only
+    once and use the correct per-method throttle bucket.
+    """
+    if request.method == "GET":
+        return list_refunds(request._request, pk, *args, **kwargs)
+    elif request.method == "POST":
+        return create_refund(request._request, pk, *args, **kwargs)
+    return HttpResponseNotAllowed(["GET", "POST"])
+
