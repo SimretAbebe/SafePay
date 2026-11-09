@@ -23,6 +23,7 @@ from .base import (
 class FakeProvider(PaymentProvider):
     name: str = "fake"
     supports_livemode: bool = False
+    supports_refund: bool = True
 
     STATUS_MAPPING: ClassVar[Dict[str, str]] = {
         "pending": "pending",
@@ -178,3 +179,15 @@ class FakeProvider(PaymentProvider):
             event_id=str(event_id) if event_id is not None else None,
             raw=data,
         )
+
+    def refund(self, payment: Any, amount: Any) -> str:
+        with provider_timer():
+            if self._force_error:
+                raise ProviderError(
+                    "FakeProvider forced refund error (test knob)",
+                    not_created=self._force_error_not_created,
+                    infrastructure=self._force_error_infrastructure,
+                )
+            payment_id = getattr(payment, "id", "0")
+            return f"fake_refund_{payment_id}_{amount}"
+
