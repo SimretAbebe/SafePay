@@ -438,3 +438,55 @@ class WebhookOutbox(models.Model):
 
     def __str__(self):
         return f"OutboxRow delivery={self.delivery_id} status={self.status} attempts={self.attempts}"
+
+
+class Refund(models.Model):
+    """
+    Merchant refund request for a succeeded payment.
+    Enforces idempotency and tracks gateway execution status.
+    """
+    STATUS_PENDING = "pending"
+    STATUS_SUCCEEDED = "succeeded"
+    STATUS_FAILED = "failed"
+    STATUS_UNSUPPORTED = "unsupported"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_SUCCEEDED, "Succeeded"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_UNSUPPORTED, "Unsupported"),
+    ]
+
+    payment = models.ForeignKey(
+        Payment,
+        on_delete=models.PROTECT,
+        related_name="refunds",
+    )
+    merchant = models.ForeignKey(
+        Merchant,
+        on_delete=models.PROTECT,
+        related_name="refunds",
+    )
+    livemode = models.BooleanField(default=False)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+    )
+    idempotency_key = models.CharField(max_length=100)
+    provider_refund_reference = models.CharField(max_length=100, blank=True, default="")
+    error_code = models.CharField(max_length=50, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["merchant", "livemode", "idempotency_key"],
+                name="unique_refund_idempotency_key",
+            )
+        ]
+
+    def __str__(self):
+        return f"Refund {self.id} for Payment {self.payment_id}: {self.amount} ({self.status})"
