@@ -29,6 +29,8 @@ class ArifPayProvider(PaymentProvider):
     supports_cancel: bool = False
     # TODO: Live credentials and legal review are required first before enabling live mode.
     supports_livemode: bool = False
+    # TODO: See https://developer.arifpay.net/docs/refund for ArifPay refund API implementation.
+    supports_refund: bool = False
 
     # The portal simulator key is ONLY valid for the sandbox PSS endpoint.
     # It must never be used for the hosted checkout endpoint in production.
