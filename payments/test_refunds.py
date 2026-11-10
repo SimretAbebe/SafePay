@@ -408,7 +408,7 @@ class RefundTests(TestCase):
         self.assertFalse(Refund.objects.filter(payment=payment).exists())
 
     # -------------------------------------------------------------------------
-    # 9. No ledger rows created
+    # 9. Reversal ledger rows created on succeeded refund
     # -------------------------------------------------------------------------
     def test_no_ledger_entries_created_by_refunds(self):
         payment = self._create_payment(amount="100.00", status="succeeded", provider="fake")
@@ -425,7 +425,7 @@ class RefundTests(TestCase):
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
 
         entries_after = LedgerEntry.objects.count()
-        self.assertEqual(entries_before, entries_after)
+        self.assertEqual(entries_after, entries_before + 2)
 
     # -------------------------------------------------------------------------
     # 10. Secret scan: response never contains provider references, secrets
