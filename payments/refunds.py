@@ -80,9 +80,12 @@ def request_refund(payment: Payment, amount: Decimal, idempotency_key: str):
     # Call the provider AFTER the atomic block commits so the row is visible.
     try:
         provider_ref = provider.refund(payment, amount)
-        refund.status = Refund.STATUS_SUCCEEDED
-        refund.provider_refund_reference = provider_ref
-        refund.save(update_fields=["status", "provider_refund_reference", "updated_at"])
+        with transaction.atomic():
+            refund.status = Refund.STATUS_SUCCEEDED
+            refund.provider_refund_reference = provider_ref
+            refund.save(update_fields=["status", "provider_refund_reference", "updated_at"])
+            from payments.ledger.services import post_refund_succeeded
+            post_refund_succeeded(refund)
     except ProviderError as exc:
         if exc.not_created:
             refund.status = Refund.STATUS_FAILED

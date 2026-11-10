@@ -842,10 +842,10 @@ class LedgerAccountAdmin(admin.ModelAdmin):
 
 @admin.register(LedgerJournal)
 class LedgerJournalAdmin(admin.ModelAdmin):
-    list_display = ("id", "payment", "kind", "created_at")
+    list_display = ("id", "payment", "refund", "kind", "created_at")
     list_filter = ("kind",)
     search_fields = ("payment__idempotency_key",)
-    readonly_fields = ("payment", "kind", "created_at")
+    readonly_fields = ("payment", "refund", "kind", "created_at")
     inlines = [LedgerEntryInline]
 
     def has_add_permission(self, request):
