@@ -8,8 +8,10 @@ Checks performed:
   2. Global totals: total debits == total credits per (livemode, currency).
   3. Every succeeded payment has exactly one payment_succeeded journal
      (skipped with --allow-missing).
-  4. Each journal's entry amounts equal its payment's amount.
+  4. Each payment journal's entry amounts equal its payment's amount.
   5. No entry exists without a journal.
+  6. Every succeeded refund has exactly one refund_succeeded journal
+     matching its amount, and non-succeeded refunds have none.
 
 Exit code 1 if any check fails.
 """
@@ -20,7 +22,7 @@ from django.core.management.base import BaseCommand
 from django.db.models import Sum, Q, F
 
 from payments.ledger.models import LedgerEntry, LedgerJournal
-from payments.models import Payment
+from payments.models import Payment, Refund
 
 
 class Command(BaseCommand):
@@ -115,7 +117,7 @@ class Command(BaseCommand):
 
         # ── Check 4: each journal's amounts match its payment's amount ──
         amount_mismatches = []
-        for journal in LedgerJournal.objects.select_related("payment").prefetch_related("entries"):
+        for journal in LedgerJournal.objects.filter(kind="payment_succeeded").select_related("payment").prefetch_related("entries"):
             for entry in journal.entries.all():
                 if entry.amount != journal.payment.amount:
                     amount_mismatches.append(journal.pk)
@@ -147,6 +149,51 @@ class Command(BaseCommand):
             failed = True
         else:
             results.append(("No orphan entries", "OK", f"{LedgerEntry.objects.count()} entries checked"))
+
+        # ── Check 6: every succeeded refund has exactly one journal matching its amount ──
+        refund_errors = []
+        succeeded_refunds = Refund.objects.filter(status="succeeded", payment__merchant__isnull=False)
+        for refund in succeeded_refunds:
+            r_journals = list(LedgerJournal.objects.filter(refund=refund, kind="refund_succeeded").prefetch_related("entries"))
+            if len(r_journals) != 1:
+                refund_errors.append(f"Refund {refund.pk} has {len(r_journals)} journals (expected 1)")
+                continue
+            r_journal = r_journals[0]
+            for entry in r_journal.entries.all():
+                if entry.amount != refund.amount:
+                    refund_errors.append(
+                        f"Refund {refund.pk} journal {r_journal.pk} entry amount {entry.amount} != refund amount {refund.amount}"
+                    )
+                    break
+
+        # Non-succeeded refunds must have none
+        bad_refund_journals = list(
+            LedgerJournal.objects.filter(
+                refund__status__in=["pending", "failed", "unsupported"],
+                kind="refund_succeeded",
+            ).values_list("refund_id", flat=True)
+        )
+        if bad_refund_journals:
+            refund_errors.append(f"Non-succeeded refunds have journals: {bad_refund_journals}")
+
+        # Orphan refund journals without a refund FK
+        orphan_refund_journals = LedgerJournal.objects.filter(kind="refund_succeeded", refund__isnull=True).count()
+        if orphan_refund_journals:
+            refund_errors.append(f"{orphan_refund_journals} refund journals without a refund")
+
+        if refund_errors:
+            results.append((
+                "Succeeded refunds journaled",
+                "FAIL",
+                f"{len(refund_errors)} errors: {'; '.join(refund_errors[:3])}",
+            ))
+            failed = True
+        else:
+            results.append((
+                "Succeeded refunds journaled",
+                "OK",
+                f"{succeeded_refunds.count()} refunds checked",
+            ))
 
         # ── Print table ─────────────────────────────────────────────────
         self.stdout.write("")
