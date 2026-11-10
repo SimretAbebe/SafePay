@@ -28,17 +28,18 @@ def _quantize(amount) -> Decimal:
     return amount.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
 
 
-def create_journal(payment, kind, lines):
+def create_journal(payment, kind, lines, refund=None):
     """
     Create a balanced journal with its entries atomically.
 
     Args:
         payment: Payment instance.
-        kind: Journal kind string (e.g. "payment_succeeded").
+        kind: Journal kind string (e.g. "payment_succeeded", "refund_succeeded").
         lines: List of (account, side, amount) tuples.
                - account: LedgerAccount instance
                - side: "debit" or "credit"
                - amount: Decimal > 0, quantized to 2 decimal places
+        refund: Optional Refund instance (linked for refund journals).
 
     Returns:
         The created LedgerJournal instance.
@@ -103,7 +104,7 @@ def create_journal(payment, kind, lines):
         )
 
     with transaction.atomic():
-        journal = LedgerJournal(payment=payment, kind=kind)
+        journal = LedgerJournal(payment=payment, refund=refund, kind=kind)
         journal.save()
 
         entries = []
@@ -179,4 +180,71 @@ def post_payment_succeeded(payment):
             payment.pk,
         )
         return None
+
+
+def post_refund_succeeded(refund):
+    """
+    Post the double-entry reversing journal for a succeeded refund.
+
+    Debits "sales" and credits "receivable:<provider>" for the refund amount.
+    Idempotent: does nothing if the refund_succeeded journal already exists for this refund.
+    Skips refunds whose payment has no merchant (logs a warning).
+    Refunds that are pending, failed or unsupported post nothing.
+
+    Designed to be called inside the caller's transaction.atomic() block
+    when the refund's status is set to succeeded.
+    """
+    if refund.status != "succeeded":
+        return None
+
+    payment = refund.payment
+    if payment.merchant is None:
+        logger.info(
+            "Skipping ledger posting for refund %s: payment %s has no merchant.",
+            refund.pk,
+            payment.pk,
+        )
+        return None
+
+    # Check if already posted for this refund (fast path)
+    if LedgerJournal.objects.filter(
+        refund=refund, kind="refund_succeeded"
+    ).exists():
+        return None
+
+    currency = "ETB"
+    provider_code = payment.provider or "direct"
+    receivable_code = f"receivable:{provider_code}"
+
+    amount = _quantize(refund.amount)
+
+    sales_account, _ = LedgerAccount.objects.get_or_create(
+        merchant=payment.merchant,
+        livemode=payment.livemode,
+        code="sales",
+        currency=currency,
+    )
+    receivable_account, _ = LedgerAccount.objects.get_or_create(
+        merchant=payment.merchant,
+        livemode=payment.livemode,
+        code=receivable_code,
+        currency=currency,
+    )
+
+    lines = [
+        (sales_account, "debit", amount),
+        (receivable_account, "credit", amount),
+    ]
+
+    try:
+        return create_journal(payment, "refund_succeeded", lines, refund=refund)
+    except IntegrityError:
+        # Concurrent insert - journal already exists. Treat as success.
+        logger.info(
+            "Ledger journal for refund %s (refund_succeeded) already exists "
+            "(concurrent create).",
+            refund.pk,
+        )
+        return None
+
 
