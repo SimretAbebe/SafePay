@@ -124,9 +124,19 @@ class LedgerJournal(ImmutableModel):
     Groups a balanced set of LedgerEntry rows for one event on a payment.
     """
 
+    KIND_PAYMENT_SUCCEEDED = "payment_succeeded"
+    KIND_REFUND_SUCCEEDED = "refund_succeeded"
+
     payment = models.ForeignKey(
         "payments.Payment",
         on_delete=models.PROTECT,
+        related_name="ledger_journals",
+    )
+    refund = models.ForeignKey(
+        "payments.Refund",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name="ledger_journals",
     )
     kind = models.CharField(max_length=50)
@@ -139,11 +149,19 @@ class LedgerJournal(ImmutableModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["payment", "kind"],
+                condition=models.Q(kind="payment_succeeded"),
                 name="unique_journal_per_payment_kind",
+            ),
+            models.UniqueConstraint(
+                fields=["refund", "kind"],
+                condition=models.Q(kind="refund_succeeded"),
+                name="unique_journal_per_refund_kind",
             ),
         ]
 
     def __str__(self):
+        if self.refund_id:
+            return f"Journal {self.pk}: {self.kind} for refund {self.refund_id} (payment {self.payment_id})"
         return f"Journal {self.pk}: {self.kind} for payment {self.payment_id}"
 
 
