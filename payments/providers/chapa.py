@@ -70,7 +70,7 @@ class ChapaProvider(PaymentProvider):
         config = self._get_config()
         secret_key = self._require_secret_key(config)
 
-        tx_ref = f"sp-{uuid.uuid4().hex}"
+        tx_ref = getattr(payment, "provider_reference", None) or f"sp-{uuid.uuid4().hex}"
         amount = str(getattr(payment, "amount", "100.00"))
         payload: Dict[str, Any] = {
             "amount": amount,
@@ -149,10 +149,20 @@ class ChapaProvider(PaymentProvider):
         if response.status_code >= 400 and response.status_code < 500:
             err_msg = data_json.get("message") if isinstance(data_json, dict) else None
             detail = err_msg or f"HTTP {response.status_code}"
+            is_used_before = bool(err_msg and "used before" in str(err_msg).lower())
+            if is_used_before:
+                raise ProviderError(
+                    self._sanitize_error(f"Chapa initialize failed: {detail}", secret_key),
+                    not_created=False,
+                    infrastructure=False,
+                    ref_used_before=True,
+                    status_code=response.status_code,
+                )
             raise ProviderError(
                 self._sanitize_error(f"Chapa initialize failed: {detail}", secret_key),
                 not_created=True,
                 infrastructure=False,
+                status_code=response.status_code,
             )
 
         if response.status_code >= 500:
@@ -162,14 +172,17 @@ class ChapaProvider(PaymentProvider):
                 self._sanitize_error(f"Chapa initialize failed: {detail}", secret_key),
                 not_created=False,
                 infrastructure=True,
+                status_code=response.status_code,
             )
 
         if not isinstance(data_json, dict) or data_json.get("status") != "success":
             msg = data_json.get("message", "Unknown error") if isinstance(data_json, dict) else "Invalid response"
+            is_used_before = bool(msg and "used before" in str(msg).lower())
             raise ProviderError(
                 self._sanitize_error(f"Chapa initialize unsuccessful: {msg}", secret_key),
                 not_created=False,
                 infrastructure=False,
+                ref_used_before=is_used_before,
             )
 
         data = data_json.get("data")
@@ -210,25 +223,75 @@ class ChapaProvider(PaymentProvider):
                     timeout=config["timeout"],
                 )
         except requests.Timeout as e:
-            raise ProviderError(self._sanitize_error(f"Chapa verify request timed out: {type(e).__name__}", secret_key))
+            raise ProviderError(
+                self._sanitize_error(f"Chapa verify request timed out: {type(e).__name__}", secret_key),
+                not_created=False,
+                infrastructure=True,
+            )
         except requests.RequestException as e:
-            raise ProviderError(self._sanitize_error(f"Chapa verify network error: {type(e).__name__}", secret_key))
+            raise ProviderError(
+                self._sanitize_error(f"Chapa verify network error: {type(e).__name__}", secret_key),
+                not_created=False,
+                infrastructure=True,
+            )
 
         try:
             data_json = response.json()
         except Exception:
+            is_infra = getattr(response, "status_code", 0) >= 500
             raise ProviderError(
                 self._sanitize_error(
                     f"Chapa verify returned invalid JSON (HTTP {response.status_code})",
                     secret_key,
-                )
+                ),
+                not_created=False,
+                infrastructure=is_infra,
+                status_code=getattr(response, "status_code", None),
             )
 
         if response.status_code != 200:
             err_msg = data_json.get("message") if isinstance(data_json, dict) else None
             detail = err_msg or f"HTTP {response.status_code}"
+            if response.status_code == 404:
+                # Chapa public docs list two distinct 404 responses from verify:
+                # 1. "Invalid transaction or Transaction not found" — nothing was created.
+                # 2. "Payment not paid yet" — a transaction exists but is unpaid.
+                # Any other 404 message is treated as uncertain/unknown.
+                msg_lower = str(err_msg or "").strip().lower()
+                if msg_lower == "invalid transaction or transaction not found":
+                    raise ProviderError(
+                        self._sanitize_error(f"Chapa verify failed: {detail}", secret_key),
+                        not_created=True,
+                        infrastructure=False,
+                        not_found=True,
+                        not_paid_yet=False,
+                        status_code=404,
+                    )
+                elif msg_lower == "payment not paid yet":
+                    raise ProviderError(
+                        self._sanitize_error(f"Chapa verify failed: {detail}", secret_key),
+                        not_created=False,
+                        infrastructure=False,
+                        not_found=False,
+                        not_paid_yet=True,
+                        status_code=404,
+                    )
+                else:
+                    # Unknown 404 message — treat as uncertain
+                    raise ProviderError(
+                        self._sanitize_error(f"Chapa verify failed: {detail}", secret_key),
+                        not_created=False,
+                        infrastructure=False,
+                        not_found=False,
+                        not_paid_yet=False,
+                        status_code=404,
+                    )
+            is_infra = response.status_code >= 500
             raise ProviderError(
-                self._sanitize_error(f"Chapa verify failed: {detail}", secret_key)
+                self._sanitize_error(f"Chapa verify failed: {detail}", secret_key),
+                not_created=False,
+                infrastructure=is_infra,
+                status_code=response.status_code,
             )
 
         if not isinstance(data_json, dict) or data_json.get("status") != "success":
