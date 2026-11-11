@@ -242,7 +242,7 @@ class PaymentStatusHistoryInline(admin.TabularInline):
 class ProviderAttemptInline(admin.TabularInline):
     """Read-only inline showing all provider call attempts for a payment."""
     model = ProviderAttempt
-    readonly_fields = ("provider", "outcome", "error_type", "created_at")
+    readonly_fields = ("provider", "provider_reference", "outcome", "error_type", "created_at")
     extra = 0
     can_delete = False
     ordering = ("created_at", "id")

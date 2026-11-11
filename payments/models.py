@@ -363,12 +363,14 @@ class ProviderAttempt(models.Model):
     OUTCOME_FAILED_NOT_CREATED = "failed_not_created"
     OUTCOME_FAILED_UNKNOWN = "failed_unknown"
     OUTCOME_SKIPPED_CIRCUIT_OPEN = "skipped_circuit_open"
+    OUTCOME_FOUND_EXISTING = "found_existing"
 
     OUTCOME_CHOICES = [
         (OUTCOME_CREATED, "Created"),
         (OUTCOME_FAILED_NOT_CREATED, "Failed — Not Created"),
         (OUTCOME_FAILED_UNKNOWN, "Failed — Unknown"),
         (OUTCOME_SKIPPED_CIRCUIT_OPEN, "Skipped — Circuit Open"),
+        (OUTCOME_FOUND_EXISTING, "Found Existing"),
     ]
 
     payment = models.ForeignKey(
@@ -377,6 +379,7 @@ class ProviderAttempt(models.Model):
         related_name="provider_attempts",
     )
     provider = models.CharField(max_length=30)
+    provider_reference = models.CharField(max_length=100, blank=True, default="")
     outcome = models.CharField(max_length=30, choices=OUTCOME_CHOICES)
     # Exception class name only — never store messages or secrets.
     error_type = models.CharField(max_length=60, blank=True, default="")
