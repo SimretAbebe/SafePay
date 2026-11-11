@@ -15,10 +15,24 @@ SAFEPAY_STATUSES = frozenset({
 class ProviderError(Exception):
     """Base exception for provider failures (not_created=True indicates safe fallback)."""
 
-    def __init__(self, *args, not_created: bool = False, infrastructure: bool = False, **kwargs):
+    def __init__(
+        self,
+        *args,
+        not_created: bool = False,
+        infrastructure: bool = False,
+        not_found: bool = False,
+        not_paid_yet: bool = False,
+        ref_used_before: bool = False,
+        status_code: Optional[int] = None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.not_created: bool = not_created
         self.infrastructure: bool = infrastructure
+        self.not_found: bool = not_found
+        self.not_paid_yet: bool = not_paid_yet
+        self.ref_used_before: bool = ref_used_before
+        self.status_code: Optional[int] = status_code
 
 
 class ProviderSignatureError(ProviderError):
