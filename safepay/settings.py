@@ -48,6 +48,7 @@ INSTALLED_APPS = [
 
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'EXCEPTION_HANDLER': 'payments.exceptions.custom_exception_handler',
     'DEFAULT_THROTTLE_RATES': {
         'payments': '5/minute',
         'payment_reads': '120/minute',
@@ -61,6 +62,7 @@ REST_FRAMEWORK = {
 MIDDLEWARE = [
     'payments.middleware.ServerTimingMiddleware',
     'payments.middleware.RequestIdMiddleware',
+    'payments.middleware.RateLimitHeadersMiddleware',
     'payments.timing.ServerTimingMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -405,7 +407,15 @@ SPECTACULAR_SETTINGS = {
         "4. Compare the computed hex digest with `X-SafePay-Signature` using a constant-time comparison.\n"
         "5. **Replay protection:** reject events where `abs(now - timestamp) > 300` seconds (5 min window).\n\n"
         "> **Important:** Treat a webhook as a *hint*. Always confirm the payment status by calling\n"
-        "> the [verify endpoint](#tag/Payments/operation/verify_payment) before fulfilling an order.\n"
+        "> the [verify endpoint](#tag/Payments/operation/verify_payment) before fulfilling an order.\n\n"
+        "---\n\n"
+        "## Rate Limiting\n\n"
+        "API endpoints enforce rate limits per merchant and mode. Responses from throttled endpoints include rate limit headers:\n\n"
+        "| Header | Description |\n"
+        "|---|---|\n"
+        "| `X-RateLimit-Limit` | Maximum number of requests permitted in the current time window. |\n"
+        "| `X-RateLimit-Remaining` | Number of requests remaining in the current time window. |\n"
+        "| `X-RateLimit-Reset` | Time in seconds until the current rate limit window resets. |\n"
     ),
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
