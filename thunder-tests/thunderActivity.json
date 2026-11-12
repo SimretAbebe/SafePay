@@ -1,0 +1,19 @@
+[
+    {
+        "_id": "e59961db-4bc9-493e-a334-a4d45e372e55",
+        "colId": "history",
+        "containerId": "",
+        "name": "http://127.0.0.1:8000/api/payments/",
+        "url": "http://127.0.0.1:8000/api/payments/",
+        "method": "GET",
+        "sortNum": 0,
+        "created": "2026-11-12T13:08:19.420Z",
+        "modified": "2026-11-12T13:09:40.579Z",
+        "headers": [
+            {
+                "name": "X-API-Key",
+                "value": "g-l7prc_ngBJWHeAt8IdLzrzDaV9Dku1L2RNbHxpt0Q"
+            }
+        ]
+    }
+]
