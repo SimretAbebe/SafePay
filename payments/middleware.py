@@ -68,3 +68,25 @@ class RequestIdFilter(logging.Filter):
     def filter(self, record):
         record.request_id = request_id_var.get("-")
         return True
+
+
+class RateLimitHeadersMiddleware:
+    """
+    Attaches rate limit headers (X-RateLimit-Limit, X-RateLimit-Remaining,
+    X-RateLimit-Reset) to responses from throttled endpoints.
+    Headers are attached only when rate limit metadata was captured during request throttling.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+
+        rate_limit_info = getattr(request, "_rate_limit_info", None)
+        if rate_limit_info and response is not None and response.status_code != 404:
+            response.headers["X-RateLimit-Limit"] = str(rate_limit_info["limit"])
+            response.headers["X-RateLimit-Remaining"] = str(rate_limit_info["remaining"])
+            response.headers["X-RateLimit-Reset"] = str(rate_limit_info["reset"])
+
+        return response
