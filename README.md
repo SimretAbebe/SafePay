@@ -15,6 +15,18 @@ While live-mode architecture (`sp_live_` keys, live webhook URLs, live transacti
 
 ---
 
+## Known Limits
+
+- **Test mode only (live mode gated off)**: The architecture for live mode (separate `sp_live_` keys, live webhook URLs, and strict data partitioning) is built into the codebase, but live mode is intentionally switched off. No real money or live gateway transactions can take place.
+- **Chapa & ArifPay cancellation**: Both Chapa and ArifPay support creating hosted checkouts and querying payment status, but neither gateway provides an API to cancel a session once opened. Asking SafePay to cancel a payment that is already with a provider returns a `409 Conflict`.
+- **Two open questions with Chapa**:
+  1. *Checkout link recovery*: If a customer closes their browser tab or loses their checkout URL, Chapa's API does not return the link again on status queries. SafePay cannot recover it from Chapa after creation.
+  2. *The "used before" error*: Re-submitting an initialize call with a reference that reached Chapa previously returns an error that the reference was used before. SafePay always checks gateway status first so it never re-initializes blindly.
+- **ArifPay webhooks require an API check**: Unlike Chapa, ArifPay does not sign incoming webhooks with an HMAC secret header. When SafePay receives an ArifPay webhook, it treats it as a notification hint and calls ArifPay's API directly to confirm the real status before marking any payment succeeded.
+- **No real money**: Everything runs against sandbox environments or our in-memory fake provider. No real bank accounts or actual funds are touched.
+
+---
+
 ## Features
 
 - **Idempotent Payments**: DB unique constraint on `(merchant, livemode, idempotency_key)` returns cached results on replays and prevents duplicate charges on concurrent taps.
