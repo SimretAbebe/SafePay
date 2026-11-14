@@ -163,3 +163,11 @@ class CheckoutSessionSerializer(serializers.Serializer):
             except ProviderError as e:
                 raise serializers.ValidationError(str(e))
         return value
+
+
+class ProviderSerializer(serializers.Serializer):
+    """Read-only provider capability information."""
+    name = serializers.CharField(help_text="Registered identifier of the payment provider.")
+    supports_refund = serializers.BooleanField(help_text="Whether the provider supports refund operations.")
+    supports_cancel = serializers.BooleanField(help_text="Whether the provider supports programmatic session cancellation.")
+    supports_livemode = serializers.BooleanField(help_text="Whether the provider is enabled for live transactions.")
