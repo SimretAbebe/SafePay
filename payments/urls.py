@@ -20,8 +20,10 @@ urlpatterns = [
     path("webhook-deliveries/", views.list_webhook_deliveries, name="webhook_delivery_list"),
     path("webhook-deliveries/<int:pk>/", views.webhook_delivery_detail, name="webhook_delivery_detail"),
     path("webhook-deliveries/<int:pk>/resend/", views.webhook_delivery_resend, name="webhook_delivery_resend"),
-    # Ledger read‑only endpoints
+    # Ledger read-only endpoints
     path("ledger/balances/", ledger_views.ledger_balances, name="ledger_balances"),
     path("ledger/entries/", ledger_views.ledger_entries, name="ledger_entries"),
     path("ledger/export.csv", ledger_views.ledger_export, name="ledger_export"),
-]
+    # Providers read-only endpoint
+    path("providers/", views.list_providers, name="list_providers"),
+]
