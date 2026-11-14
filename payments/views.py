@@ -25,13 +25,20 @@ from .permissions import HasAPIKey
 from .providers import (
     ChapaProvider,
     ArifPayProvider,
+    FakeProvider,
     ProviderError,
     ProviderSignatureError,
     UnsupportedProviderStatus,
     get_provider,
 )
+from .providers.registry import PROVIDER_REGISTRY, is_fake_provider_enabled
 from .routing import build_provider_chain, start_checkout
-from .serializers import CheckoutSessionSerializer, PaymentListItemSerializer, PaymentSerializer
+from .serializers import (
+    CheckoutSessionSerializer,
+    PaymentListItemSerializer,
+    PaymentSerializer,
+    ProviderSerializer,
+)
 from .services import notify_status_change, resend_delivery, schedule_first_check, sync_payment_from_provider
 from .tasks import log_payment_event
 from .throttling import PaymentRateThrottle, PaymentReadRateThrottle, WebhookResendThrottle
@@ -1695,4 +1702,71 @@ def refunds_dispatch(request, pk, *args, **kwargs):
     elif request.method == "POST":
         return create_refund(request._request, pk, *args, **kwargs)
     return HttpResponseNotAllowed(["GET", "POST"])
+
+
+@extend_schema(
+    summary="List registered payment providers",
+    description="Returns a list of registered payment providers and their supported capabilities, sorted by name.",
+    responses={
+        200: OpenApiResponse(
+            response=ProviderSerializer(many=True),
+            description="List of registered payment providers sorted by name.",
+            examples=[
+                OpenApiExample(
+                    "Providers list example",
+                    value=[
+                        {
+                            "name": "arifpay",
+                            "supports_refund": False,
+                            "supports_cancel": False,
+                            "supports_livemode": False,
+                        },
+                        {
+                            "name": "chapa",
+                            "supports_refund": False,
+                            "supports_cancel": False,
+                            "supports_livemode": False,
+                        },
+                        {
+                            "name": "fake",
+                            "supports_refund": True,
+                            "supports_cancel": True,
+                            "supports_livemode": False,
+                        },
+                    ],
+                )
+            ],
+        ),
+        403: OpenApiResponse(description="Invalid or missing API key."),
+        429: OpenApiResponse(description="Rate limit exceeded."),
+    },
+    tags=["Providers"],
+)
+@api_view(["GET"])
+@permission_classes([HasAPIKey])
+@throttle_classes([PaymentReadRateThrottle])
+def list_providers(request):
+    """
+    Returns one item per registered provider from the provider registry,
+    sorted by name, reading capabilities directly from each adapter's class attributes.
+    """
+    if is_fake_provider_enabled():
+        if "fake" not in PROVIDER_REGISTRY:
+            PROVIDER_REGISTRY["fake"] = FakeProvider()
+    else:
+        PROVIDER_REGISTRY.pop("fake", None)
+
+    providers = []
+    for provider in PROVIDER_REGISTRY.values():
+        adapter_cls = type(provider) if not isinstance(provider, type) else provider
+        providers.append({
+            "name": str(getattr(adapter_cls, "name", provider.name)),
+            "supports_refund": bool(getattr(adapter_cls, "supports_refund", False)),
+            "supports_cancel": bool(getattr(adapter_cls, "supports_cancel", False)),
+            "supports_livemode": bool(getattr(adapter_cls, "supports_livemode", False)),
+        })
+
+    providers.sort(key=lambda item: item["name"])
+    return Response(providers, status=status.HTTP_200_OK)
+
 
