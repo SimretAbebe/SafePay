@@ -181,6 +181,9 @@ SERVER_TIMING_ENABLED = os.getenv(
 SERVER_TIMING_DETAILED = os.getenv("SERVER_TIMING_DETAILED", "False").strip().lower() in ("true", "1")
 SLOW_REQUEST_MS = int(os.getenv("SLOW_REQUEST_MS", "800"))
 
+# Staff payment simulator
+SIMULATOR_ENABLED = os.getenv("SIMULATOR_ENABLED", "True").strip().lower() in ("true", "1")
+
 from celery.schedules import crontab
 
 CELERY_BEAT_SCHEDULE = {
@@ -435,6 +438,7 @@ SPECTACULAR_SETTINGS = {
         r"^/api/webhooks/",
         r"^/health/",
         r"^/ready/",
+        r"^/simulator/",
     ],
     "TAGS": [
         {"name": "Checkout", "description": "Create and manage checkout sessions."},
