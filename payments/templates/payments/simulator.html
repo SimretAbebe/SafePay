@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Simulator - SafePay</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f8fafc;
+            color: #1e293b;
+            margin: 0;
+            padding: 2rem;
+        }
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 2rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        h1 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            color: #0f172a;
+        }
+        p.desc {
+            color: #64748b;
+            font-size: 0.95rem;
+            margin-bottom: 1.5rem;
+        }
+        .actions {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .actions form {
+            margin: 0;
+        }
+        button {
+            padding: 0.6rem 1.2rem;
+            font-size: 0.95rem;
+            font-weight: 500;
+            border-radius: 6px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: background-color 0.15s ease-in-out;
+        }
+        .btn-pay {
+            background-color: #10b981;
+            color: #ffffff;
+        }
+        .btn-pay:hover {
+            background-color: #059669;
+        }
+        .btn-fail {
+            background-color: #ef4444;
+            color: #ffffff;
+        }
+        .btn-fail:hover {
+            background-color: #dc2626;
+        }
+        .btn-never {
+            background-color: #64748b;
+            color: #ffffff;
+        }
+        .btn-never:hover {
+            background-color: #475569;
+        }
+        .details-box {
+            border-top: 1px solid #e2e8f0;
+            padding-top: 1.5rem;
+            margin-top: 1.5rem;
+        }
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            border-radius: 4px;
+            background-color: #e2e8f0;
+            color: #334155;
+        }
+        .badge-succeeded { background-color: #d1fae5; color: #065f46; }
+        .badge-failed { background-color: #fee2e2; color: #991b1b; }
+        .badge-pending { background-color: #fef3c7; color: #92400e; }
+        .summary-text {
+            font-size: 1.1rem;
+            font-weight: 500;
+            margin: 0.75rem 0;
+        }
+        .timeline {
+            list-style: none;
+            padding: 0;
+            margin-top: 1rem;
+        }
+        .timeline-item {
+            position: relative;
+            padding-left: 1.5rem;
+            margin-bottom: 1rem;
+            border-left: 2px solid #cbd5e1;
+        }
+        .timeline-item::before {
+            content: "";
+            position: absolute;
+            left: -5px;
+            top: 4px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #3b82f6;
+        }
+        .timeline-time {
+            font-size: 0.8rem;
+            color: #64748b;
+        }
+        .timeline-event {
+            font-size: 0.95rem;
+            color: #1e293b;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>SafePay Payment Simulator</h1>
+    <p class="desc">Staff-only testing sandbox. Simulates payment flows using test mode and the fake provider.</p>
+
+    <div class="actions">
+        <form method="post" action="/simulator/new/pay/">
+            {% csrf_token %}
+            <button type="submit" class="btn-pay">Pay</button>
+        </form>
+        <form method="post" action="/simulator/new/fail/">
+            {% csrf_token %}
+            <button type="submit" class="btn-fail">Fail</button>
+        </form>
+        <form method="post" action="/simulator/new/never/">
+            {% csrf_token %}
+            <button type="submit" class="btn-never">Never answer</button>
+        </form>
+    </div>
+
+    {% if investigation %}
+    <div class="details-box">
+        <div>
+            <strong>Status:</strong>
+            <span class="badge badge-{{ investigation.status }}">{{ investigation.status }}</span>
+        </div>
+        <div class="summary-text">{{ investigation.summary }}</div>
+
+        <h3>Lifecycle Timeline</h3>
+        <ul class="timeline">
+            {% for item in investigation.timeline %}
+            <li class="timeline-item">
+                <div class="timeline-time">{{ item.at }}</div>
+                <div class="timeline-event">{{ item.event }}</div>
+            </li>
+            {% empty %}
+            <li>No events recorded.</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+</body>
+</html>
