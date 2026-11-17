@@ -4,14 +4,82 @@ SafePay is a payment processing backend built with Django REST Framework for Eth
 
 ---
 
-## Status: Test Mode Only
+## Status: Private & Test Mode Only
 
-SafePay is currently configured for **test mode only**. 
+> **Status Notice:** Private repository, under development. Test mode only. Live mode is built and switched off.
 
 While live-mode architecture (`sp_live_` keys, live webhook URLs, live transaction isolation) is implemented in code, live mode is strictly gated off:
 - `LIVE_MODE_AVAILABLE=False` by default; merchants require `live_enabled=True`.
 - Provider adapters have `supports_livemode = False` until production contracts and compliance reviews are completed.
 - Live-key requests return `403 Forbidden`, and checkout requests fail with `"No live-capable provider is configured"`.
+
+---
+
+## Table of Contents
+
+- [Status: Private & Test Mode Only](#status-private--test-mode-only)
+- [Quickstart](#quickstart)
+- [Repository Resources](#repository-resources)
+- [Known Limits](#known-limits)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Running Benchmarks](#running-benchmarks)
+- [Checking a SafePay Webhook](#checking-a-safepay-webhook)
+
+---
+
+## Quickstart
+
+### 1. Prerequisites
+- Python 3.10+
+- PostgreSQL & Redis (or Docker Compose)
+
+### 2. Setup Local Environment
+
+```bash
+# Clone the repository
+git clone https://github.com/SimretAbebe/SafePay.git
+cd SafePay
+
+# Create and activate virtual environment
+python -m venv venv
+source venv/Scripts/activate  # On Windows (Git Bash) or venv\Scripts\activate (PowerShell)
+
+# Install dependencies
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+
+# Configure environment variables
+cp .env.example .env
+
+# Run database migrations
+python manage.py migrate
+
+# Create a test merchant with API keys
+python manage.py create_merchant "Demo Merchant"
+```
+
+### 3. Start Development Server
+
+```bash
+# Run server
+python manage.py runserver
+
+# Run test suite
+python manage.py test payments
+```
+
+---
+
+## Repository Resources
+
+- **Documentation Index:** [docs/README.md](docs/README.md)
+- **Code Map:** [docs/code-map.md](docs/code-map.md)
+- **Provider Plugin Guide:** [docs/provider-plugin-guide.md](docs/provider-plugin-guide.md)
+- **Review Queue Runbook:** [docs/runbook-review-queue.md](docs/runbook-review-queue.md)
+- **Contributing Guidelines:** [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Security Policy:** [SECURITY.md](SECURITY.md)
+- **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
