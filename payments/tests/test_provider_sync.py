@@ -8,7 +8,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from payments.models import Payment, PaymentStatusHistory, WebhookDelivery
+from payments.models import Payment, WebhookDelivery
 from payments.providers import FakeProvider, ProviderError
 from payments.services import sync_payment_from_provider
 from payments.test_utils import create_test_merchant

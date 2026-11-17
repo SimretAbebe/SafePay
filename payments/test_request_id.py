@@ -6,7 +6,6 @@ from django.core.cache import cache
 from django.http import HttpResponse
 from django.test import RequestFactory, TestCase, override_settings
 from django.urls import path
-from rest_framework import status
 from rest_framework.test import APIClient
 
 from payments.middleware import RequestIdFilter, RequestIdMiddleware, request_id_var

@@ -17,7 +17,7 @@ import os
 import subprocess
 import sys
 import uuid
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.admin.sites import AdminSite
@@ -28,7 +28,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from payments.admin import WebhookDeliveryAdmin, retry_webhook_deliveries
-from payments.models import Merchant, Payment, WebhookDelivery
+from payments.models import Payment, WebhookDelivery
 from payments.providers import register_provider
 from payments.providers.fake import FakeProvider
 from payments.providers.registry import _registry

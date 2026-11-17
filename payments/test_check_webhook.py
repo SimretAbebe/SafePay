@@ -23,10 +23,9 @@ import time
 import uuid
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
-import urllib.error
 
 from django.core.management import call_command
-from django.test import TestCase, override_settings
+from django.test import TestCase
 
 from payments.models import Merchant, Payment
 from payments.tasks import _sign_payload

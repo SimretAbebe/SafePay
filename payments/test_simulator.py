@@ -1,8 +1,6 @@
 from decimal import Decimal
-import re
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
-from django.urls import reverse
 
 from payments.models import Merchant, Payment
 from payments.simulator import DEMO_MERCHANT_NAME

@@ -18,8 +18,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from payments.models import Merchant, Payment
-from payments.ledger.models import LedgerAccount, LedgerEntry, LedgerJournal
-from payments.ledger.services import post_payment_succeeded
+from payments.ledger.models import LedgerAccount, LedgerEntry
 
 
 def create_merchant(name="TestMerchant"):

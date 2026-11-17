@@ -6,7 +6,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from payments.models import Merchant, Payment, ProviderAttempt, Refund, WebhookDelivery
-from payments.providers.registry import PROVIDER_REGISTRY, is_fake_provider_enabled
+from payments.providers.registry import PROVIDER_REGISTRY
 from payments.test_utils import create_test_merchant
 
 

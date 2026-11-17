@@ -2,9 +2,7 @@ import uuid
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
-from django.conf import settings
 from django.contrib.admin.sites import AdminSite
-from django.contrib.messages.storage.fallback import FallbackStorage
 from django.db import transaction
 from django.test import RequestFactory, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
@@ -12,7 +10,7 @@ from django.utils import timezone
 from payments.admin import WebhookOutboxAdmin, requeue_outbox_rows
 from payments.models import Merchant, Payment, WebhookDelivery, WebhookOutbox
 from payments.services import resend_delivery
-from payments.tasks import deliver_webhook_attempt, drain_webhook_outbox
+from payments.tasks import drain_webhook_outbox
 
 
 class OutboxTestBase(TestCase):

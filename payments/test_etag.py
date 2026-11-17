@@ -1,4 +1,3 @@
-import datetime
 import hashlib
 import json
 import re
@@ -10,7 +9,7 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.test import APIClient
 
 from payments.http_cache import etag_matches, make_etag
-from payments.models import Merchant, Payment
+from payments.models import Payment
 from payments.serializers import PaymentSerializer
 from payments.test_utils import create_test_merchant
 

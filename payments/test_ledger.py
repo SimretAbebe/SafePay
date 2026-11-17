@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 from django.contrib.admin.sites import AdminSite
 from django.core.management import call_command
-from django.db import connection, IntegrityError, transaction
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.db import connection
+from django.test import TestCase, TransactionTestCase
 
 from payments.ledger.models import (
     LedgerAccount,

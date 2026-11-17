@@ -31,9 +31,9 @@ class VerifyEndpointTests(TestCase):
         self.merchant_a, self.key_a = create_test_merchant("Verify Merchant A")
         self.merchant_b, self.key_b = create_test_merchant("Verify Merchant B")
 
-    
+
     # Test 1: Verify returns minimal status body for owning merchant
-  
+
     def test_verify_returns_minimal_body_for_owning_merchant(self):
         payment = _create_payment(self.merchant_a, "verify-key-1")
         url = reverse("verify_payment", kwargs={"pk": payment.pk})
@@ -49,9 +49,9 @@ class VerifyEndpointTests(TestCase):
         self.assertNotIn("amount", response.data)
         self.assertNotIn("sender", response.data)
 
-    
+
     # Test 2: Verify on another merchant's payment returns 404
-  
+
     def test_verify_another_merchants_payment_returns_404(self):
         payment = _create_payment(self.merchant_a, "verify-key-2")
         url = reverse("verify_payment", kwargs={"pk": payment.pk})
@@ -81,7 +81,7 @@ class CancelEndpointTests(TestCase):
         )
         self.merchant_b, self.key_b = create_test_merchant("Cancel Merchant B")
 
-       
+
     # Test 4: Cancel a pending payment -> 200, status=cancelled, 1 history row
 
     @patch("payments.tasks.deliver_webhook_attempt.delay")
@@ -132,7 +132,7 @@ class CancelEndpointTests(TestCase):
         ).count()
         self.assertEqual(history_count_after_second, history_count_after_first)
 
-    
+
     # Test 6: Cancel a processing payment -> 409, status unchanged
 
     @patch("payments.tasks.deliver_webhook_attempt.delay")
@@ -151,7 +151,7 @@ class CancelEndpointTests(TestCase):
         payment.refresh_from_db()
         self.assertEqual(payment.status, "processing")
 
-    
+
     # Test 7: Cancel another merchant's payment -> 404, not 409, even when that payment is in a state that would give 409 for its owner
 
     @patch("payments.tasks.deliver_webhook_attempt.delay")
@@ -173,7 +173,7 @@ class CancelEndpointTests(TestCase):
         payment.refresh_from_db()
         self.assertEqual(payment.status, "processing")
 
-    
+
     # Test 8: Cancelling a pending payment sends exactly one webhook delivery
 
     @patch("payments.tasks.deliver_webhook_attempt.delay")

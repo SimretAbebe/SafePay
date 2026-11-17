@@ -1,10 +1,8 @@
 import base64
 import hashlib
 import hmac
-import json
 import logging
 from unittest.mock import MagicMock, patch
-from urllib.parse import urlparse
 
 from django.conf import settings
 from django.contrib import messages
@@ -17,11 +15,8 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from payments.admin import MerchantAdmin
-from payments.models import Merchant, Payment, WebhookDelivery
+from payments.models import Merchant, Payment
 from payments.providers import (
-    InitResult,
-    PaymentProvider,
-    ProviderStatusResult,
     register_provider,
 )
 from payments.providers.fake import FakeProvider

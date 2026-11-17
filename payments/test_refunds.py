@@ -1,4 +1,3 @@
-import json
 import uuid
 from decimal import Decimal
 from unittest.mock import patch
@@ -9,7 +8,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from payments.ledger.models import LedgerEntry
-from payments.models import Merchant, Payment, Refund
+from payments.models import Payment, Refund
 from payments.providers.arifpay import ArifPayProvider
 from payments.providers.chapa import ChapaProvider
 from payments.providers.fake import FakeProvider
