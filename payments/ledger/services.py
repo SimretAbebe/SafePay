@@ -6,7 +6,7 @@ inside a single transaction.
 """
 
 import logging
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import IntegrityError, transaction
 

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import LedgerAccount, LedgerEntry
+from .models import LedgerEntry
 
 
 class LedgerAccountBalanceSerializer(serializers.Serializer):

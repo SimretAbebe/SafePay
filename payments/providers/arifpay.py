@@ -14,7 +14,6 @@ from .base import (
     PaymentProvider,
     ProviderError,
     ProviderEvent,
-    ProviderSignatureError,
     ProviderStatusResult,
     UnsupportedProviderStatus,
     validate_safepay_status,
