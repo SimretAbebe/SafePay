@@ -17,8 +17,7 @@ from typing import Any, Dict, Optional
 import urllib.error
 import urllib.request
 
-from django.core.management.base import BaseCommand, CommandError
-from django.conf import settings
+from django.core.management.base import BaseCommand
 
 from payments.models import Merchant
 from payments.webhook_secrets import derive_merchant_secret

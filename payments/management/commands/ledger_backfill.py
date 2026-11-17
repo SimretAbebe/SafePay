@@ -8,9 +8,7 @@ A second run is a no-op.
 """
 
 from django.core.management.base import BaseCommand
-from django.db.models import Q
 
-from payments.ledger.models import LedgerJournal
 from payments.ledger.services import post_payment_succeeded
 from payments.models import Payment
 

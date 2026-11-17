@@ -8,7 +8,7 @@ import logging
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Sum
 
 from .models import Payment, Refund
 from .providers import ProviderError, get_provider

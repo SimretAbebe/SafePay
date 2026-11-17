@@ -265,9 +265,9 @@ class ReviewQueuePayment(Payment):
 class WebhookDelivery(models.Model):
 
     STATUS_CHOICES = [
-        ("pending", "Pending"),     
-        ("succeeded", "Succeeded"), 
-        ("failed", "Failed"),       
+        ("pending", "Pending"),
+        ("succeeded", "Succeeded"),
+        ("failed", "Failed"),
     ]
 
     payment = models.ForeignKey(

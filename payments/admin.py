@@ -21,7 +21,7 @@ from .models import (
     Refund,
 )
 from .services import resend_delivery
-from .tasks import deliver_webhook_attempt, reconcile_payment
+from .tasks import reconcile_payment
 from .webhook_secrets import derive_merchant_secret
 from .webhook_urls import validate_webhook_url
 
