@@ -1,7 +1,6 @@
 import hashlib
 import hmac
 import json
-import os
 import time
 import uuid
 from payments.timing import provider_timer

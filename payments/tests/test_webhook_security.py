@@ -1,13 +1,11 @@
 import hashlib
 import hmac
-import json
-import time
 from unittest.mock import MagicMock, patch
 
 from django.conf import settings
 from django.test import TestCase
 
-from payments.models import Payment, WebhookDelivery
+from payments.models import Payment
 from payments.services import notify_status_change
 from payments.webhook_verification import verify_webhook
 

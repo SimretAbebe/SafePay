@@ -4,11 +4,10 @@ cooldown, digest, heartbeat, data migration, and security.
 
 All network access is mocked — no real HTTP requests are made.
 """
-import logging
 import uuid
 from datetime import timedelta
 from decimal import Decimal
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.admin.sites import AdminSite
 from django.core.cache import cache
@@ -16,9 +15,9 @@ from django.db import connection
 from django.test import RequestFactory, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
-from payments.admin import PaymentAdmin, ReviewQueuePaymentAdmin, REVIEW_REASON_LABELS
+from payments.admin import PaymentAdmin, ReviewQueuePaymentAdmin
 from payments.alerts import format_age, send_alert_message
-from payments.models import Merchant, Payment, ReviewQueuePayment
+from payments.models import Payment, ReviewQueuePayment
 from payments.tasks import (
     alert_new_reviews,
     reconcile_pending_payments,

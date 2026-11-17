@@ -1,16 +1,15 @@
 from datetime import timedelta
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from django.core.cache import cache
-from django.db import IntegrityError, transaction
 from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from payments.models import Merchant, Payment, PaymentStatusHistory, WebhookDelivery
+from payments.models import Payment, WebhookDelivery
 from payments.providers import FakeProvider, ProviderError
 from payments.services import expire_one, reconcile_one, sync_payment_from_provider
 from payments.tasks import expire_pending_payments

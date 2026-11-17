@@ -8,7 +8,6 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from payments.models import Payment
 from payments.providers import FakeProvider
 from payments.test_utils import create_test_merchant
 
@@ -139,7 +138,6 @@ class DocsEnabledDisabledTests(TestCase):
         # we simulate by directly requesting the URLs and checking if they would
         # be absent from urlpatterns when API_DOCS_ENABLED is False.
         # In a fresh process with API_DOCS_ENABLED=False, these paths are not in urlpatterns.
-        from django.urls import resolve, Resolver404
 
         # We test by constructing a fresh URLconf module with API_DOCS_ENABLED=False
         with override_settings(API_DOCS_ENABLED=False, ROOT_URLCONF="safepay.urls_docs_disabled"):

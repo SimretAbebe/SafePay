@@ -1,6 +1,6 @@
 # Changelog
 
-A day-by-day record of everything built in SafePay from Day 1 to Day 46, organized by area.
+A day-by-day record of everything built in SafePay from Day 1 to Day 50, organized by area.
 
 ---
 
@@ -17,6 +17,7 @@ A day-by-day record of everything built in SafePay from Day 1 to Day 46, organiz
 - **Day 22: Cursor-Paginated Payment List** — Built a fast, tamper-proof payment list endpoint (`GET /api/payments/`) with cursor pagination and filters for date, status, and provider.
 - **Day 25: Automated Payment Expiry** — Automatically expire abandoned checkout sessions after a set time window, with safety checks in case someone pays late.
 - **Day 43: Refund Processing** — Added an idempotent refund model and endpoint (`POST /api/refunds/`) that verifies balances before returning funds.
+- **Day 48: Staff Payment Simulator** — Created a staff-only sandbox page (`/simulator/`) with "Pay", "Fail", and "Never answer" buttons to test state transitions and view investigator timelines.
 
 ---
 
@@ -28,6 +29,8 @@ A day-by-day record of everything built in SafePay from Day 1 to Day 46, organiz
 - **Day 21: ArifPay Gateway Adapter** — Built the ArifPay adapter supporting both hosted checkout and direct payment sessions.
 - **Day 24: Multi-Provider Routing & Safe Fallback** — Added primary and fallback provider routing per merchant; SafePay only falls back if the primary provider confirmed the payment was never created.
 - **Day 46: Verify-Before-Retry & Chain Widening Guard** — Always check with the gateway before retrying an initialization, and make sure retries never widen the fallback chain to prevent accidental double charges.
+- **Day 47: Provider Capabilities List Endpoint** — Built `GET /api/providers/` to expose read-only capability flags (`supports_refund`, `supports_cancel`, `supports_livemode`) for enabled providers.
+- **Day 49: Provider Plugin Template & Guide** — Added a standard starter template (`payments/providers/template_provider.py`) and developer documentation (`docs/provider-plugin-guide.md`) for building new provider adapters safely.
 
 ---
 
@@ -82,3 +85,4 @@ A day-by-day record of everything built in SafePay from Day 1 to Day 46, organiz
 - **Day 34: Health & Readiness Probes** — Added `/health/` and `/ready/` endpoints to verify database connectivity, Redis, and circuit breaker status.
 - **Day 36: Latency Benchmarking** — Built a safe benchmark command (`python manage.py bench`) to measure API latency percentiles locally without touching live gateways.
 - **Day 42: Webhook Diagnostic Verification Tool** — Built `python manage.py check_webhook` to help developers verify payloads, signatures, and timestamps step by step.
+- **Day 50: Repository Professionalization** — Structured comprehensive documentation (`docs/`), security policy, contributing guide, environment variable specs, and code maps.

@@ -1,4 +1,3 @@
-from decimal import Decimal
 from unittest.mock import patch
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -7,7 +6,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from payments.models import Payment, PaymentStatusHistory
-from payments.providers import FakeProvider, ProviderError, get_provider
+from payments.providers import FakeProvider, ProviderError
 from payments.test_utils import create_test_merchant
 
 

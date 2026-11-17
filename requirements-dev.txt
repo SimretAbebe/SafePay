@@ -1,0 +1,5 @@
+# Development and testing tools
+-r requirements.txt
+
+pytest==7.4.3
+ruff==0.17.5

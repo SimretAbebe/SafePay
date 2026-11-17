@@ -25,8 +25,8 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from payments.ledger.models import LedgerAccount, LedgerEntry, LedgerJournal
-from payments.ledger.services import create_journal, post_refund_succeeded
-from payments.models import Merchant, Payment, Refund
+from payments.ledger.services import post_refund_succeeded
+from payments.models import Payment, Refund
 from payments.providers.fake import FakeProvider
 from payments.refunds import request_refund
 from payments.test_utils import create_test_merchant

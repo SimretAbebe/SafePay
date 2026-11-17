@@ -1,0 +1,16 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+exclude = [
+    ".git",
+    "venv",
+    "demo",
+    "*/migrations/*",
+]
+
+[tool.ruff.lint]
+select = [
+    "F401",  # unused imports
+    "W292",  # missing newline at end of file
+]

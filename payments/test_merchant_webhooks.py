@@ -1,7 +1,3 @@
-import hashlib
-import hmac
-import json
-import logging
 import socket
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +13,7 @@ from payments.services import notify_status_change
 from payments.tasks import deliver_webhook_attempt
 from payments.test_utils import create_test_merchant
 from payments.webhook_secrets import derive_merchant_secret
-from payments.webhook_urls import is_target_safe, validate_webhook_url
+from payments.webhook_urls import validate_webhook_url
 from payments.webhook_verification import verify_webhook
 
 

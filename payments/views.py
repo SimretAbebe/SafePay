@@ -20,7 +20,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiRespon
 from drf_spectacular.types import OpenApiTypes
 
 from .http_cache import etag_matches, make_etag
-from .models import InboundWebhookEvent, Payment, Refund, WebhookDelivery
+from .models import InboundWebhookEvent, Payment, WebhookDelivery
 from .permissions import HasAPIKey
 from .providers import (
     ChapaProvider,

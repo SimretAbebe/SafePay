@@ -19,7 +19,7 @@ Exit code 1 if any check fails.
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
-from django.db.models import Sum, Q, F
+from django.db.models import Sum, Q
 
 from payments.ledger.models import LedgerEntry, LedgerJournal
 from payments.models import Payment, Refund

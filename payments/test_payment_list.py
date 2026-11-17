@@ -8,7 +8,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from payments.models import Merchant, Payment
+from payments.models import Payment
 from payments.providers import register_provider
 from payments.providers.fake import FakeProvider
 from payments.test_utils import create_test_merchant

@@ -2,7 +2,7 @@ from unittest.mock import patch, MagicMock
 
 from django.test import TestCase
 
-from payments.models import Payment, WebhookDelivery
+from payments.models import Payment
 from payments.services import notify_status_change
 
 

@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 from django.conf import settings
-from django.utils import timezone as dj_timezone
 
 from .models import Payment, ProviderAttempt
 from .providers import ProviderError, get_provider

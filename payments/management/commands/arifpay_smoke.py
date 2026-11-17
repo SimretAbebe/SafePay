@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from payments.models import Payment
-from payments.providers import ArifPayProvider, ProviderError, get_provider
+from payments.providers import ArifPayProvider, ProviderError
 
 
 class Command(BaseCommand):

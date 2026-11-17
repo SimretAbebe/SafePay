@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 from datetime import timedelta
 
 from django.core.cache import cache
-from django.db import transaction
 from django.test import RequestFactory, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -14,10 +13,10 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from payments.admin import PaymentAdmin
-from payments.models import Merchant, Payment, PaymentStatusHistory, WebhookDelivery
-from payments.providers import FakeProvider, ProviderError, UnsupportedProviderStatus
-from payments.services import backoff_delay, reconcile_one, schedule_first_check
-from payments.tasks import reconcile_payment, reconcile_pending_payments
+from payments.models import Payment, WebhookDelivery
+from payments.providers import FakeProvider, ProviderError
+from payments.services import backoff_delay, reconcile_one
+from payments.tasks import reconcile_pending_payments
 from payments.test_utils import create_test_merchant
 
 

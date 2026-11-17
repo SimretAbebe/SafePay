@@ -14,7 +14,6 @@ from payments.providers import (
     ProviderEvent,
     ProviderStatusResult,
     get_provider,
-    validate_safepay_status,
 )
 
 class FakeNoCancelProvider(FakeProvider):
@@ -180,11 +179,11 @@ class ProviderFrameworkTests(TestCase):
         payload = {"reference": ref, "status": "paid", "event_id": "evt1"}
         body = json.dumps(payload).encode("utf-8")
         sig = hmac.new(b"fake-secret-for-tests", body, hashlib.sha256).hexdigest()
-        
+
         with override_settings(FAKE_PROVIDER_SECRET="fake-secret-for-tests"):
             result = self.provider.confirm_from_webhook({"X-Fake-Signature": sig}, body)
             self.assertEqual(result.status, "pending")
-            
+
             # Tampered body raises error
             bad_body = json.dumps({"reference": ref, "status": "failed"}).encode("utf-8")
             with self.assertRaises(ProviderError):
@@ -192,7 +191,7 @@ class ProviderFrameworkTests(TestCase):
 
     def test_status_expired(self):
         from payments.models import InvalidStateTransition
-        
+
         # pending -> expired is allowed and records history
         p1 = Payment.objects.create(
             merchant=self.merchant,
@@ -204,7 +203,7 @@ class ProviderFrameworkTests(TestCase):
         p1.transition_to("expired")
         self.assertEqual(p1.status, "expired")
         self.assertTrue(p1.status_history.filter(to_status="expired").exists())
-        
+
         # processing -> expired is rejected
         p2 = Payment.objects.create(
             merchant=self.merchant,
@@ -216,7 +215,7 @@ class ProviderFrameworkTests(TestCase):
         )
         with self.assertRaises(InvalidStateTransition):
             p2.transition_to("expired")
-            
+
         # expired has no exits
         with self.assertRaises(InvalidStateTransition):
             p1.transition_to("failed")

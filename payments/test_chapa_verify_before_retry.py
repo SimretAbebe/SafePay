@@ -1,5 +1,4 @@
 """Unit and integration tests for Chapa verify-before-retry behavior."""
-import logging
 import uuid
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
@@ -11,11 +10,9 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from payments import breaker
 from payments.models import Payment, ProviderAttempt
-from payments.providers import ProviderError
 from payments.providers.fake import FakeProvider
-from payments.routing import build_provider_chain, start_checkout
+from payments.routing import build_provider_chain
 from payments.test_utils import create_test_merchant
 
 URL = reverse("create_checkout_session")
