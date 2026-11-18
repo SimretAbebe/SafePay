@@ -6,7 +6,7 @@ SafePay is a payment processing backend built with Django REST Framework for Eth
 
 ## Status: Private & Test Mode Only
 
-> **Status Notice:** Private repository, under development. Test mode only. Live mode is built and switched off.
+> **Status Notice:** Private repository, under development. Test mode only. Live mode is built and switched off. See [Known Limits](docs/known-limits.md) for full operational boundaries and constraints.
 
 While live-mode architecture (`sp_live_` keys, live webhook URLs, live transaction isolation) is implemented in code, live mode is strictly gated off:
 - `LIVE_MODE_AVAILABLE=False` by default; merchants require `live_enabled=True`.
