@@ -24,12 +24,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-=ugmij%p5y4^65fpj7wm@66qumttg8+=j!popwl9qorr8*3q52'
+SECRET_KEY = os.getenv(
+    "SECRET_KEY",
+    "django-insecure-=ugmij%p5y4^65fpj7wm@66qumttg8+=j!popwl9qorr8*3q52",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DEBUG", "True").strip().lower() in ("true", "1")
 
-ALLOWED_HOSTS = ["*"]
+_allowed_hosts_raw = os.getenv("ALLOWED_HOSTS", "*")
+ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_raw.split(",") if h.strip()]
+
+# Security & SSL configuration (safe production defaults when set via env)
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").strip().lower() in ("true", "1")
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "False").strip().lower() in ("true", "1")
+CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "False").strip().lower() in ("true", "1")
+SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0"))
+if SECURE_HSTS_SECONDS > 0:
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "True").strip().lower() in ("true", "1")
+    SECURE_HSTS_PRELOAD = os.getenv("SECURE_HSTS_PRELOAD", "True").strip().lower() in ("true", "1")
 
 
 # Application definition
