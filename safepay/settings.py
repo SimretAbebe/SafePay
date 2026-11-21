@@ -114,7 +114,10 @@ WSGI_APPLICATION = 'safepay.wsgi.application'
 
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "dev-secret-change-me")
 WEBHOOK_TARGET_URL = os.getenv("WEBHOOK_TARGET_URL", "https://webhook.site/your-unique-id")
-ALLOW_PRIVATE_WEBHOOK_TARGETS = True
+ALLOW_PRIVATE_WEBHOOK_TARGETS = os.getenv(
+    "ALLOW_PRIVATE_WEBHOOK_TARGETS",
+    "False",
+).strip().lower() in ("true", "1")
 SAFE_PAY_API_KEY = os.getenv("SAFE_PAY_API_KEY", "dev-api-key-change-me")
 ENABLE_FAKE_PROVIDER = True
 FAKE_PROVIDER_DELAY_MS = int(os.getenv("FAKE_PROVIDER_DELAY_MS", "300"))
