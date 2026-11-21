@@ -35,7 +35,10 @@ Stage 2 represents the actual cloud infrastructure provisioning and deployment, 
    - Selecting a target cloud host or managed container runtime (e.g., Render, Railway, AWS ECS, DigitalOcean, or private VPS).
 2. **Production Infrastructure Provisioning**:
    - Provisioning managed PostgreSQL 16+ database instance.
-   - Provisioning managed Redis 7+ instance for Celery task queuing and caching.
+   - Provisioning managed Redis 7+ instance for Celery task queuing and caching:
+     - `REDIS_URL` configures the Celery background job queue broker and result backend.
+     - `REDIS_CACHE_URL` configures application caching (rate limits, circuit breakers, health probes); defaults to `REDIS_URL` if not set separately. In production, both typically point to the same Redis URL.
+     - A dedicated Celery background worker process (`celery -A safepay worker`) is required for background jobs (such as outbox webhook dispatch and reconciliation sweeps) to run.
 3. **Injecting Production Secrets**:
    - Setting real production values in the hosting platform's environment variables based on `.env.production.example` (strong `SECRET_KEY`, `DEBUG=False`, specific `ALLOWED_HOSTS`, real gateway keys).
 4. **Database Migration Step**:
