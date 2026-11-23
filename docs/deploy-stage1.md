@@ -39,6 +39,7 @@ Stage 2 represents the actual cloud infrastructure provisioning and deployment, 
      - `REDIS_URL` configures the Celery background job queue broker and result backend.
      - `REDIS_CACHE_URL` configures application caching (rate limits, circuit breakers, health probes); defaults to `REDIS_URL` if not set separately. In production, both typically point to the same Redis URL.
      - A dedicated Celery background worker process (`celery -A safepay worker`) is required for background jobs (such as outbox webhook dispatch and reconciliation sweeps) to run.
+     - **Status**: Redis provisioned on Render in Ohio, `REDIS_URL` and `REDIS_CACHE_URL` set, `/ready/` checks passing, background worker not yet deployed.
 3. **Injecting Production Secrets**:
    - Setting real production values in the hosting platform's environment variables based on `.env.production.example` (strong `SECRET_KEY`, `DEBUG=False`, specific `ALLOWED_HOSTS`, real gateway keys).
 4. **Database Migration Step**:
