@@ -1,6 +1,7 @@
 import json
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
+import requests
 
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
@@ -571,3 +572,17 @@ class ArifPaySmokeCommandTests(TestCase):
         output = out.getvalue()
         self.assertIn("SafePay Status        : succeeded", output)
         self.assertIn("sess-smoke-456", output)
+
+    @patch("payments.providers.arifpay.requests.post")
+    def test_initialize_errors_do_not_leak_api_key(self, mock_post):
+        """Prove that ArifPay error messages do not leak ARIFPAY_API_KEY on failures or timeouts."""
+        provider = ArifPayProvider()
+        api_key = "test-arifpay-merchant-key"
+        mock_post.side_effect = requests.RequestException(f"Connection failed with auth {api_key}")
+
+        with self.assertRaises(ProviderError) as ctx:
+            provider.initialize(DummyPayment())
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn(api_key, err_msg)
+
