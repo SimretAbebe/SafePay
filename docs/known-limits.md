@@ -4,7 +4,7 @@ This document outlines the current operational boundaries, constraints, and unve
 
 ---
 
-## Mode
+## Mode & Environment
 
 - **Test mode only.**
 - SafePay is configured and restricted to test mode.
@@ -12,6 +12,9 @@ This document outlines the current operational boundaries, constraints, and unve
   - `LIVE_MODE_AVAILABLE` defaults to `False` in settings.
   - All payment provider adapters define `supports_livemode = False`.
   - Any request using a live key (`sp_live_...`) is rejected with HTTP `403 Forbidden`.
+- **Infrastructure & Deployment Status:**
+  - **Redis connected:** Redis is provisioned and connected (used for cache and queue configuration via `REDIS_URL` and `REDIS_CACHE_URL`).
+  - **No background worker running on the live server yet:** Celery background workers are not yet deployed or running on the live server; asynchronous tasks and outbox draining require a running worker.
 
 ---
 
