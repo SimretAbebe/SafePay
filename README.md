@@ -4,6 +4,17 @@ SafePay is a payment processing backend built with Django REST Framework for Eth
 
 ---
 
+## Trust and Proof
+
+- **Live Demo:** [https://safepay-7aew.onrender.com/health/](https://safepay-7aew.onrender.com/health/)
+- **Provider Guide:** [docs/provider-plugin-guide.md](docs/provider-plugin-guide.md)
+- **Provider Template:** [payments/providers/template_provider.py](payments/providers/template_provider.py)
+- **Compliance Tests:** [payments/tests/test_provider_compliance.py](payments/tests/test_provider_compliance.py)
+
+The app runs in test mode only and has no background worker yet.
+
+---
+
 ## Status: Private & Test Mode Only
 
 > **Status Notice:** Private repository, under development. Test mode only. Live mode is built and switched off. See [Known Limits](docs/known-limits.md) for full operational boundaries and constraints.
@@ -17,6 +28,7 @@ While live-mode architecture (`sp_live_` keys, live webhook URLs, live transacti
 
 ## Table of Contents
 
+- [Trust and Proof](#trust-and-proof)
 - [Status: Private & Test Mode Only](#status-private--test-mode-only)
 - [Quickstart](#quickstart)
 - [Repository Resources](#repository-resources)
