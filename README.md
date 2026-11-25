@@ -15,9 +15,9 @@ The app runs in test mode only and has no background worker yet.
 
 ---
 
-## Status: Private & Test Mode Only
+## Status: Public & Test Mode Only
 
-> **Status Notice:** Private repository, under development. Test mode only. Live mode is built and switched off. See [Known Limits](docs/known-limits.md) for full operational boundaries and constraints.
+> **Status Notice:** Public repository, under development. Test mode only. Live mode is built and switched off. See [Known Limits](docs/known-limits.md) for full operational boundaries and constraints.
 
 While live-mode architecture (`sp_live_` keys, live webhook URLs, live transaction isolation) is implemented in code, live mode is strictly gated off:
 - `LIVE_MODE_AVAILABLE=False` by default; merchants require `live_enabled=True`.
@@ -29,7 +29,7 @@ While live-mode architecture (`sp_live_` keys, live webhook URLs, live transacti
 ## Table of Contents
 
 - [Trust and Proof](#trust-and-proof)
-- [Status: Private & Test Mode Only](#status-private--test-mode-only)
+- [Status: Public & Test Mode Only](#status-public--test-mode-only)
 - [Quickstart](#quickstart)
 - [Repository Resources](#repository-resources)
 - [Known Limits](#known-limits)
@@ -180,7 +180,7 @@ docker compose exec web python manage.py create_merchant --name "Demo Store"
 ```bash
 curl -X POST http://localhost:8000/api/checkout/sessions/ \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: sp_test_samplekey1234567890abcdef" \
+  -H "X-API-Key: sp_test_example_key_here" \
   -H "Idempotency-Key: demo-idempotency-key-001" \
   -d '{
     "amount": "250.00",

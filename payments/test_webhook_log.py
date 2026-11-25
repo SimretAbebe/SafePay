@@ -414,7 +414,7 @@ class WebhookDeliveryFieldSetTests(TestCase):
 
     def test_raw_last_error_never_in_response(self):
         # Put a secret-looking string in last_error; it must not appear in any response field
-        secret_error = "API_SECRET_KEY=sk_live_SUPERSECRET conn refused"
+        secret_error = "API_SECRET_KEY=test-fake-key-not-real conn refused"
         d = _make_delivery(self.payment, last_error=secret_error)
 
         resp_list = self.client.get(reverse("webhook_delivery_list"))
