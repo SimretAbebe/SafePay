@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow fake keys in payments test files and README"
+paths = [
+    '''^payments/tests/''',
+    '''^payments/test_.*\.py$''',
+    '''^README\.md$''',
+]
