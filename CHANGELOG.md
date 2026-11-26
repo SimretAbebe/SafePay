@@ -4,6 +4,24 @@ A day-by-day record of everything built in SafePay from Day 1 to Day 50, organiz
 
 ---
 
+## Day 60: Final state
+
+Done:
+- Repository is public, with a README Trust and Proof section linking the live demo, provider guide, provider template, and compliance tests
+- Live demo runs in test mode on Render, with /health/ returning ok
+- Redis connected for cache and queue; /ready/ returns ready
+- Provider compliance tests cover unknown status handling, cancel and refund support, and secret leaks
+- Private webhook targets are off by default
+- Secret scan of the full history reviewed; findings were test fixtures and obvious fake keys were renamed
+
+Not done:
+- Background Celery worker and beat are not running, so jobs like webhook delivery, reconciliation, and expiry do not run automatically
+- Live provider testing is not done
+- Legal review is not done
+- Repository is not transferred to the SafePay-org organisation
+
+---
+
 ## Payments
 
 - **Day 1: Payment Model & DB Constraints** — Set up the initial `Payment` table with a database-level unique constraint on idempotency keys to stop double charges at the data layer.
